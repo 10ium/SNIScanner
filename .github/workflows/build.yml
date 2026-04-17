@@ -1,0 +1,51 @@
+name: Build and Release SNI Scanner
+
+on:
+  push:
+    tags:
+      - 'v*' # این اکشن فقط زمانی اجرا می‌شود که شما یک تگ مثل v1.0 بسازید
+  workflow_dispatch: # امکان اجرای دستی از پنل گیت‌هاب
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11' # استفاده از پایتون پایدار
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+
+    - name: Build executable with PyInstaller
+      run: |
+        pyinstaller --noconsole --onefile --name "SNI_Scanner_Pro" SNIScanner.py
+
+    - name: Upload Artifact (for manual builds)
+      uses: actions/upload-artifact@v4
+      if: github.event_name == 'workflow_dispatch'
+      with:
+        name: SNI_Scanner_Pro_Windows
+        path: dist/SNI_Scanner_Pro.exe
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: dist/SNI_Scanner_Pro.exe
+        name: SNI Scanner Pro Release ${{ github.ref_name }}
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
