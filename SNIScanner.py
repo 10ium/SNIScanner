@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # ====== تنظیمات پایه و دیتابیس ======
 VERSION = "v1.2.0"
-# برای کارکرد آپدیتر، یوزرنیم و ریپازیتوری گیت‌هاب خود را اینجا جایگزین کنید:
+# لینک اختصاصی گیت‌هاب شما برای سیستم آپدیت خودکار
 GITHUB_API_URL = "https://api.github.com/repos/10ium/SNIScanner/releases/latest"
 SETTINGS_FILE = "radar_settings.json"
 
@@ -338,6 +338,28 @@ class SNIScannerApp:
         self.lbl_status = ttk.Label(self.left_panel)
         self.lbl_status.grid(row=3, column=0, sticky="e", pady=5)
 
+    # ==========================
+    # Methods Additions/Fixes
+    # ==========================
+
+    def toggle_check(self, event):
+        region = self.tree.identify_region(event.x, event.y)
+        if region == "cell":
+            column = self.tree.identify_column(event.x)
+            if column == '#1': 
+                clicked_item = self.tree.identify_row(event.y)
+                if not clicked_item: return
+                self._check_item(clicked_item)
+
+    def _check_item(self, item_id):
+        for child in self.tree.get_children():
+            vals = list(self.tree.item(child, "values"))
+            if child == item_id:
+                vals[0] = "☑" if vals[0] == "☐" else "☐"
+            else:
+                vals[0] = "☐"
+            self.tree.item(child, values=vals)
+
     def create_metric_card(self, parent, bg_color, fg_color):
         frame = tk.Frame(parent, bg=bg_color, bd=1, relief="ridge")
         frame.pack(side="left", fill="both", expand=True, padx=3)
@@ -394,7 +416,6 @@ class SNIScannerApp:
         if not self.is_scanning:
             self.lbl_status.configure(text=t["ready"])
 
-        # آپدیت هدرهای جدول
         for col, key in [("select","col_select"), ("target","col_target"), ("ip","col_ip"), ("port","col_port"), 
                          ("ping","col_ping"), ("sni","col_sni"), ("cdn","col_cdn"), ("speed","col_speed"), ("status","col_status")]:
             self.tree.heading(col, text=t[key], command=lambda c=col: self.treeview_sort_column(c, False))
@@ -412,7 +433,7 @@ class SNIScannerApp:
         self.style.configure("Primary.TButton", font=self.font_bold, background="#0d6efd", foreground="white", padding=6)
         self.style.map("Primary.TButton", background=[("active", "#0b5ed7")])
 
-        if self.theme_state == 0: # Light
+        if self.theme_state == 0: 
             bg_color = "#f8f9fa"
             fg_color = "#212529"
             tree_bg = "white"
@@ -420,7 +441,7 @@ class SNIScannerApp:
             input_bg = "white"
             dash_bgs = ["#e9ecef", "#d1e7dd", "#cff4fc", "#f8d7da"]
             dash_fgs = ["#495057", "#0f5132", "#055160", "#842029"]
-        elif self.theme_state == 1: # Dark
+        elif self.theme_state == 1: 
             bg_color = "#212529"
             fg_color = "#f8f9fa"
             tree_bg = "#343a40"
@@ -428,7 +449,7 @@ class SNIScannerApp:
             input_bg = "#495057"
             dash_bgs = ["#343a40", "#198754", "#0dcaf0", "#dc3545"]
             dash_fgs = ["#f8f9fa", "#fff", "#000", "#fff"]
-        else: # Pitch Black
+        else: 
             bg_color = "#000000"
             fg_color = "#a0a0a0"
             tree_bg = "#050505"
@@ -451,7 +472,6 @@ class SNIScannerApp:
         self.text_input.configure(bg=input_bg, fg=fg_color, insertbackground=fg_color)
         self.ports_input.configure(bg=input_bg, fg=fg_color, insertbackground=fg_color)
 
-        # Update metric cards
         for i, frame in enumerate(self.stat_frames):
             frame.configure(bg=dash_bgs[i])
             for widget in frame.winfo_children():
@@ -471,8 +491,9 @@ class SNIScannerApp:
                     msg = "شما از آخرین نسخه استفاده می‌کنید." if self.current_lang=="fa" else "You are using the latest version."
                     messagebox.showinfo("Up to date", msg)
         except Exception as e:
-            msg = "خطا در بررسی بروزرسانی." if self.current_lang=="fa" else "Error checking for updates."
-            messagebox.showerror("Error", f"{msg}\n{e}")
+            # مدیریت خطای 404 (زمانی که در ریپازیتوری هنوز Release ساخته نشده باشد)
+            msg = "هیچ نسخه‌ای روی مخزن گیت‌هاب یافت نشد." if self.current_lang=="fa" else "No releases found on GitHub repository."
+            messagebox.showinfo("Info", msg)
 
     def save_settings(self):
         settings = {
