@@ -17,8 +17,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 # ====== تنظیمات پایه و دیتابیس ======
-VERSION = "v1.2.1"
-# لینک اختصاصی گیت‌هاب شما برای سیستم آپدیت خودکار
+VERSION = "v1.3.0"
 GITHUB_API_URL = "https://api.github.com/repos/10ium/SNIScanner/releases/latest"
 SETTINGS_FILE = "radar_settings.json"
 
@@ -40,6 +39,7 @@ FALLBACK_DNS = {
 }
 
 DEFAULT_PORTS = "80, 8080, 8880, 2052, 2082, 2086, 2095, 443, 2053, 2083, 2087, 2096, 8443"
+DEFAULT_SPEED_URL = "/" # فایل پیش‌فرض برای تست سرعت (روت سرور)
 
 # ====== سیستم زبان (i18n) ======
 LANG = {
@@ -54,6 +54,7 @@ LANG = {
         "settings": "تنظیمات رادار شبکه",
         "default_sni": ":SNI پیش‌فرض (برای آی‌پی)",
         "target_ports": ":پورت‌های هدف (خط جدید یا کاما)",
+        "speed_url": ":مسیر تست سرعت (مثال: /10MB.bin)",
         "max_cidr": ":حداکثر بسط رنج (CIDR)",
         "threads": ":سرعت اسکن (موازی)",
         "timeout": ":زمان انتظار (ثانیه)",
@@ -73,7 +74,8 @@ LANG = {
         "msg_copied": "در کلیپ‌بورد کپی شد.", "msg_empty_clipboard": "کلیپ‌بورد خالی است.",
         "st_sni_usable": "✔ اس‌ان‌آی متصل", "st_tcp_ok": "✔ پورت باز", "st_ping_only": "◐ فقط پینگ", "st_down": "✖ مسدود", "st_timeout": "تایم‌اوت", "st_filtered": "✖ فیلتر شده",
         "st_valid": "معتبر", "st_invalid": "ناموفق",
-        "targets_count": "تارگت‌های یکتا:"
+        "targets_count": "تارگت‌های یکتا:",
+        "time_elapsed": "سپری شده:", "time_eta": "باقی‌مانده:"
     },
     "en": {
         "title": f"Advanced SNI Radar - {VERSION}",
@@ -86,6 +88,7 @@ LANG = {
         "settings": "Network Radar Settings",
         "default_sni": "Default SNI (for IPs):",
         "target_ports": "Target Ports (Comma/Newline):",
+        "speed_url": "Speed Test Path (e.g. /10MB.bin):",
         "max_cidr": "Max CIDR Expand:",
         "threads": "Scan Speed (Threads):",
         "timeout": "Timeout (Seconds):",
@@ -105,16 +108,16 @@ LANG = {
         "msg_copied": "Copied to clipboard.", "msg_empty_clipboard": "Clipboard is empty.",
         "st_sni_usable": "✔ SNI Usable", "st_tcp_ok": "✔ Port Open", "st_ping_only": "◐ Ping Only", "st_down": "✖ Blocked", "st_timeout": "Timeout", "st_filtered": "✖ Filtered",
         "st_valid": "Valid", "st_invalid": "Failed",
-        "targets_count": "Unique Targets:"
+        "targets_count": "Unique Targets:",
+        "time_elapsed": "Elapsed:", "time_eta": "ETA:"
     }
 }
 
 class SNIScannerApp:
     def __init__(self, root):
         self.root = root
-        self.root.geometry("1250x850")
+        self.root.geometry("1280x880")
         
-        # State variables
         self.current_lang = "fa"
         self.theme_state = 0 # 0: Light, 1: Dark, 2: Pitch Black
         
@@ -129,6 +132,7 @@ class SNIScannerApp:
         self.result_queue = queue.Queue()
         self.stop_event = threading.Event()
         
+        # Stats & Time tracking
         self.stat_total_scans = 0
         self.stat_checked = 0
         self.stat_success = 0
@@ -136,11 +140,14 @@ class SNIScannerApp:
         self.stat_down = 0
         self.stat_unique_targets = 0
         
+        self.start_time = 0
+        
         self.setup_ui()
         self.load_settings()
         self.apply_theme()
         self.apply_language()
         self.root.after(100, self.process_queue)
+        self.root.after(1000, self.update_timer)
 
     def setup_ui(self):
         self.root.columnconfigure(0, weight=1)
@@ -208,11 +215,18 @@ class SNIScannerApp:
         row_idx += 1
         ports_frame = ttk.Frame(self.settings_frame)
         ports_frame.grid(row=row_idx, column=0, sticky="ew", padx=5, pady=5)
-        self.ports_input = tk.Text(ports_frame, height=3, width=25, font=("Consolas", 10))
+        self.ports_input = tk.Text(ports_frame, height=2, width=25, font=("Consolas", 10))
         self.ports_input.insert("1.0", DEFAULT_PORTS)
         self.ports_input.pack(side="left", fill="x", expand=True)
         self.lbl_set_ports = ttk.Label(self.settings_frame)
         self.lbl_set_ports.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+
+        # فیلد جدید: تست سرعت شخصی‌سازی شده
+        row_idx += 1
+        self.speed_url_var = tk.StringVar(value=DEFAULT_SPEED_URL)
+        ttk.Entry(self.settings_frame, textvariable=self.speed_url_var, justify="left").grid(row=row_idx, column=0, sticky="ew", padx=5, pady=5)
+        self.lbl_set_speed_url = ttk.Label(self.settings_frame)
+        self.lbl_set_speed_url.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
 
         row_idx += 1
         self.cidr_limit_var = tk.IntVar(value=256)
@@ -282,11 +296,11 @@ class SNIScannerApp:
         self.left_panel = ttk.Frame(self.root)
         self.left_panel.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         self.left_panel.columnconfigure(0, weight=1)
-        self.left_panel.rowconfigure(2, weight=1)
+        self.left_panel.rowconfigure(3, weight=1)
 
-        # داشبورد آمار زنده
+        # 1. داشبورد آمار زنده
         self.dash_frame = tk.Frame(self.left_panel)
-        self.dash_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        self.dash_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         
         self.stat_frames = []
         self.lbl_stat_total_val, self.lbl_stat_total_title = self.create_metric_card(self.dash_frame, "#e9ecef", "#495057")
@@ -294,9 +308,23 @@ class SNIScannerApp:
         self.lbl_stat_ping_val, self.lbl_stat_ping_title = self.create_metric_card(self.dash_frame, "#cff4fc", "#055160")
         self.lbl_stat_down_val, self.lbl_stat_down_title = self.create_metric_card(self.dash_frame, "#f8d7da", "#842029")
 
-        # ابزارهای بالای جدول
+        # 2. نوار پیشرفت و زمان‌سنج (Progress Dashboard)
+        progress_frame = ttk.Frame(self.left_panel)
+        progress_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        progress_frame.columnconfigure(1, weight=1)
+
+        self.lbl_progress_pct = ttk.Label(progress_frame, text="0%", font=self.font_bold, width=5)
+        self.lbl_progress_pct.grid(row=0, column=0, sticky="w", padx=(0,5))
+
+        self.progress_bar = ttk.Progressbar(progress_frame, orient="horizontal", mode="determinate")
+        self.progress_bar.grid(row=0, column=1, sticky="ew", padx=5)
+
+        self.lbl_time_info = ttk.Label(progress_frame, text="", font=("Consolas", 8))
+        self.lbl_time_info.grid(row=0, column=2, sticky="e", padx=(5,0))
+
+        # 3. ابزارهای بالای جدول
         tools_frame = ttk.Frame(self.left_panel)
-        tools_frame.grid(row=1, column=0, sticky="ew", pady=(0, 5))
+        tools_frame.grid(row=2, column=0, sticky="ew", pady=(0, 5))
         
         self.btn_export_json = ttk.Button(tools_frame, style="Success.TButton", command=self.export_config)
         self.btn_export_json.pack(side="left", padx=2)
@@ -310,10 +338,16 @@ class SNIScannerApp:
         self.lbl_targets_count = ttk.Label(tools_frame, font=self.font_bold, foreground="#198754")
         self.lbl_targets_count.pack(side="left", padx=15)
 
-        self.lbl_sort_guide = ttk.Label(tools_frame, font=("Tahoma", 8))
-        self.lbl_sort_guide.pack(side="right")
+        # دکمه‌های اسکرول سریع
+        btn_scroll_down = ttk.Button(tools_frame, text="⬇️", width=3, command=lambda: self.tree.yview_moveto(1))
+        btn_scroll_down.pack(side="right", padx=2)
+        btn_scroll_up = ttk.Button(tools_frame, text="⬆️", width=3, command=lambda: self.tree.yview_moveto(0))
+        btn_scroll_up.pack(side="right", padx=2)
 
-        # جدول نتایج
+        self.lbl_sort_guide = ttk.Label(tools_frame, font=("Tahoma", 8))
+        self.lbl_sort_guide.pack(side="right", padx=10)
+
+        # 4. جدول نتایج
         columns = ("select", "target", "ip", "port", "ping", "sni", "cdn", "speed", "status")
         self.tree = ttk.Treeview(self.left_panel, columns=columns, show="headings")
         
@@ -327,38 +361,16 @@ class SNIScannerApp:
         self.tree.column("speed", width=80, anchor="center")
         self.tree.column("status", width=110, anchor="center")
 
-        self.tree.grid(row=2, column=0, sticky="nsew")
+        self.tree.grid(row=3, column=0, sticky="nsew")
         
         scrollbar = ttk.Scrollbar(self.left_panel, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscroll=scrollbar.set)
-        scrollbar.grid(row=2, column=1, sticky='ns')
+        scrollbar.grid(row=3, column=1, sticky='ns')
 
         self.tree.bind('<ButtonRelease-1>', self.toggle_check)
 
         self.lbl_status = ttk.Label(self.left_panel)
-        self.lbl_status.grid(row=3, column=0, sticky="e", pady=5)
-
-    # ==========================
-    # Methods Additions/Fixes
-    # ==========================
-
-    def toggle_check(self, event):
-        region = self.tree.identify_region(event.x, event.y)
-        if region == "cell":
-            column = self.tree.identify_column(event.x)
-            if column == '#1': 
-                clicked_item = self.tree.identify_row(event.y)
-                if not clicked_item: return
-                self._check_item(clicked_item)
-
-    def _check_item(self, item_id):
-        for child in self.tree.get_children():
-            vals = list(self.tree.item(child, "values"))
-            if child == item_id:
-                vals[0] = "☑" if vals[0] == "☐" else "☐"
-            else:
-                vals[0] = "☐"
-            self.tree.item(child, values=vals)
+        self.lbl_status.grid(row=4, column=0, sticky="e", pady=5)
 
     def create_metric_card(self, parent, bg_color, fg_color):
         frame = tk.Frame(parent, bg=bg_color, bd=1, relief="ridge")
@@ -387,6 +399,7 @@ class SNIScannerApp:
         self.settings_frame.configure(text=f" {t['settings']} ")
         self.lbl_set_sni.configure(text=t["default_sni"])
         self.lbl_set_ports.configure(text=t["target_ports"])
+        self.lbl_set_speed_url.configure(text=t["speed_url"])
         self.lbl_set_cidr.configure(text=t["max_cidr"])
         self.lbl_set_threads.configure(text=t["threads"])
         self.lbl_set_timeout.configure(text=t["timeout"])
@@ -415,6 +428,7 @@ class SNIScannerApp:
         
         if not self.is_scanning:
             self.lbl_status.configure(text=t["ready"])
+            self.lbl_time_info.configure(text=f"{t['time_elapsed']} 00:00 | {t['time_eta']} --:--")
 
         for col, key in [("select","col_select"), ("target","col_target"), ("ip","col_ip"), ("port","col_port"), 
                          ("ping","col_ping"), ("sni","col_sni"), ("cdn","col_cdn"), ("speed","col_speed"), ("status","col_status")]:
@@ -477,6 +491,38 @@ class SNIScannerApp:
             for widget in frame.winfo_children():
                 widget.configure(bg=dash_bgs[i], fg=dash_fgs[i])
 
+    def format_time(self, seconds):
+        m, s = divmod(int(seconds), 60)
+        h, m = divmod(m, 60)
+        if h > 0: return f"{h:02d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
+
+    def update_timer(self):
+        if self.is_scanning:
+            elapsed = time.time() - self.start_time
+            
+            eta = 0
+            if self.stat_checked > 0:
+                speed = self.stat_checked / elapsed
+                remaining_tasks = self.stat_total_scans - self.stat_checked
+                eta = remaining_tasks / speed if speed > 0 else 0
+
+            t = LANG[self.current_lang]
+            self.lbl_time_info.configure(text=f"{t['time_elapsed']} {self.format_time(elapsed)} | {t['time_eta']} {self.format_time(eta)}")
+            
+        self.root.after(1000, self.update_timer)
+
+    def update_metrics_ui(self):
+        self.lbl_stat_total_val.configure(text=f"{self.stat_checked} / {self.stat_total_scans}")
+        self.lbl_stat_success_val.configure(text=str(self.stat_success))
+        self.lbl_stat_ping_val.configure(text=str(self.stat_ping_only))
+        self.lbl_stat_down_val.configure(text=str(self.stat_down))
+        
+        if self.stat_total_scans > 0:
+            pct = (self.stat_checked / self.stat_total_scans) * 100
+            self.progress_bar["value"] = pct
+            self.lbl_progress_pct.configure(text=f"{int(pct)}%")
+
     def check_for_updates(self):
         try:
             req = urllib.request.Request(GITHUB_API_URL, headers={'User-Agent': 'Mozilla/5.0'})
@@ -491,7 +537,6 @@ class SNIScannerApp:
                     msg = "شما از آخرین نسخه استفاده می‌کنید." if self.current_lang=="fa" else "You are using the latest version."
                     messagebox.showinfo("Up to date", msg)
         except Exception as e:
-            # مدیریت خطای 404 (زمانی که در ریپازیتوری هنوز Release ساخته نشده باشد)
             msg = "هیچ نسخه‌ای روی مخزن گیت‌هاب یافت نشد." if self.current_lang=="fa" else "No releases found on GitHub repository."
             messagebox.showinfo("Info", msg)
 
@@ -500,6 +545,7 @@ class SNIScannerApp:
             "targets": self.text_input.get("1.0", tk.END).strip(),
             "ports": self.ports_input.get("1.0", tk.END).strip(),
             "default_sni": self.default_sni_var.get(),
+            "speed_url": self.speed_url_var.get(),
             "cidr_limit": self.cidr_limit_var.get(),
             "threads": self.threads_var.get(),
             "timeout": self.timeout_var.get(),
@@ -532,6 +578,7 @@ class SNIScannerApp:
             self.ports_input.insert("1.0", settings.get("ports", DEFAULT_PORTS))
             
             self.default_sni_var.set(settings.get("default_sni", "yahoo.com"))
+            self.speed_url_var.set(settings.get("speed_url", DEFAULT_SPEED_URL))
             self.cidr_limit_var.set(settings.get("cidr_limit", 256))
             self.threads_var.set(settings.get("threads", 20))
             self.timeout_var.set(settings.get("timeout", 2.0))
@@ -570,11 +617,23 @@ class SNIScannerApp:
         self.text_input.delete("1.0", tk.END)
         self.text_input.insert("1.0", '\n'.join(unique) + '\n')
 
-    def update_metrics_ui(self):
-        self.lbl_stat_total_val.configure(text=f"{self.stat_checked} / {self.stat_total_scans}")
-        self.lbl_stat_success_val.configure(text=str(self.stat_success))
-        self.lbl_stat_ping_val.configure(text=str(self.stat_ping_only))
-        self.lbl_stat_down_val.configure(text=str(self.stat_down))
+    def toggle_check(self, event):
+        region = self.tree.identify_region(event.x, event.y)
+        if region == "cell":
+            column = self.tree.identify_column(event.x)
+            if column == '#1': 
+                clicked_item = self.tree.identify_row(event.y)
+                if not clicked_item: return
+                self._check_item(clicked_item)
+
+    def _check_item(self, item_id):
+        for child in self.tree.get_children():
+            vals = list(self.tree.item(child, "values"))
+            if child == item_id:
+                vals[0] = "☑" if vals[0] == "☐" else "☐"
+            else:
+                vals[0] = "☐"
+            self.tree.item(child, values=vals)
 
     def treeview_sort_column(self, col, reverse):
         l =[(self.tree.set(k, col), k) for k in self.tree.get_children('')]
@@ -642,6 +701,9 @@ class SNIScannerApp:
         return False, None
 
     def measure_speed(self, ip, port, sni, timeout):
+        req_path = self.speed_url_var.get().strip()
+        if not req_path.startswith('/'): req_path = '/' + req_path
+
         try:
             start = time.time()
             ctx = ssl.create_default_context()
@@ -650,7 +712,7 @@ class SNIScannerApp:
             with socket.create_connection((ip, port), timeout=timeout) as sock:
                 if port in[443, 8443, 2053, 2083, 2087, 2096]:
                     with ctx.wrap_socket(sock, server_hostname=sni) as ssock:
-                        req = f"GET / HTTP/1.1\r\nHost: {sni}\r\nConnection: close\r\n\r\n"
+                        req = f"GET {req_path} HTTP/1.1\r\nHost: {sni}\r\nConnection: close\r\n\r\n"
                         ssock.sendall(req.encode())
                         bytes_recv = 0
                         while True:
@@ -659,7 +721,7 @@ class SNIScannerApp:
                             bytes_recv += len(data)
                             if time.time() - start > 1.0: break
                 else:
-                    req = f"GET / HTTP/1.1\r\nHost: {sni}\r\nConnection: close\r\n\r\n"
+                    req = f"GET {req_path} HTTP/1.1\r\nHost: {sni}\r\nConnection: close\r\n\r\n"
                     sock.sendall(req.encode())
                     bytes_recv = 0
                     while True:
@@ -769,7 +831,6 @@ class SNIScannerApp:
         default_sni = self.default_sni_var.get().strip()
         max_cidr = self.cidr_limit_var.get()
         
-        # پارس کردن پورت‌ها (پشتیبانی از خط جدید و کاما)
         raw_ports = self.ports_input.get("1.0", tk.END).replace('\n', ',').split(',')
         ports =[int(p.strip()) for p in raw_ports if p.strip().isdigit() and 0 < int(p.strip()) <= 65535]
         if not ports: ports = [443]
@@ -815,12 +876,16 @@ class SNIScannerApp:
         self.stat_success = 0
         self.stat_ping_only = 0
         self.stat_down = 0
+        self.progress_bar["value"] = 0
+        self.lbl_progress_pct.configure(text="0%")
         
         self.lbl_targets_count.configure(text=f"{LANG[self.current_lang]['targets_count']} {self.stat_unique_targets}")
         self.update_metrics_ui()
 
         self.is_scanning = True
+        self.start_time = time.time()
         self.stop_event.clear()
+        
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
         self.btn_export_json.configure(state="disabled")
@@ -880,6 +945,9 @@ class SNIScannerApp:
         self.btn_export_csv.configure(state="normal")
         self.btn_export_custom.configure(state="normal")
         
+        self.progress_bar["value"] = 100
+        self.lbl_progress_pct.configure(text="100%")
+        
         self.sort_results_by_default()
         self.lbl_status.configure(text="Finished.")
         
@@ -938,7 +1006,6 @@ class SNIScannerApp:
         if not path: return
 
         try:
-            # استفاده از utf-8-sig برای حل مشکل نمایش حروف فارسی در اکسل
             with open(path, mode='w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
                 headers = [LANG[self.current_lang][k] for k in ["col_target", "col_ip", "col_port", "col_ping", "col_sni", "col_cdn", "col_speed", "col_status"]]
