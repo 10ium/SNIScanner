@@ -17,7 +17,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 # ====== تنظیمات پایه و دیتابیس ======
-VERSION = "v1.2.0"
+VERSION = "v1.2.1"
 # لینک اختصاصی گیت‌هاب شما برای سیستم آپدیت خودکار
 GITHUB_API_URL = "https://api.github.com/repos/10ium/SNIScanner/releases/latest"
 SETTINGS_FILE = "radar_settings.json"
