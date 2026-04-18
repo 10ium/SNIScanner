@@ -13,9 +13,15 @@ import ssl
 import subprocess
 import platform
 import webbrowser
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-# ====== دیتابیس‌های داخلی ======
+# ====== تنظیمات پایه و دیتابیس ======
+VERSION = "v1.2.0"
+# برای کارکرد آپدیتر، یوزرنیم و ریپازیتوری گیت‌هاب خود را اینجا جایگزین کنید:
+GITHUB_API_URL = "https://api.github.com/repos/10ium/SNIScanner/releases/latest"
+SETTINGS_FILE = "radar_settings.json"
+
 CDN_PREFIXES = {
     "Cloudflare":["104.16.", "104.17.", "104.18.", "104.19.", "104.20.", "104.21.", "172.64.", "172.65.", "172.66.", "172.67.", "172.68.", "172.69."],
     "Vercel":["76.76.", "66.33.", "216.230.", "198.169."],
@@ -33,15 +39,84 @@ FALLBACK_DNS = {
     "react.dev":["66.33.60.193"],
 }
 
-SETTINGS_FILE = "radar_settings.json"
+DEFAULT_PORTS = "80, 8080, 8880, 2052, 2082, 2086, 2095, 443, 2053, 2083, 2087, 2096, 8443"
+
+# ====== سیستم زبان (i18n) ======
+LANG = {
+    "fa": {
+        "title": f"رادار پیشرفته اس‌ان‌آی - {VERSION}",
+        "telegram": "کانال تلگرام",
+        "update": "بررسی بروزرسانی",
+        "lang_toggle": "English",
+        "theme_0": "☀️ روشن", "theme_1": "🌙 تاریک", "theme_2": "🌑 سیاه مطلق",
+        "input_label": "ورودی (دامنه‌، آی‌پی، CIDR):",
+        "paste": "📋 پیست", "browse": "📁 انتخاب فایل", "clear": "🗑 پاک کردن", "dedup": "✨ حذف تکراری‌ها",
+        "settings": "تنظیمات رادار شبکه",
+        "default_sni": ":SNI پیش‌فرض (برای آی‌پی)",
+        "target_ports": ":پورت‌های هدف (خط جدید یا کاما)",
+        "max_cidr": ":حداکثر بسط رنج (CIDR)",
+        "threads": ":سرعت اسکن (موازی)",
+        "timeout": ":زمان انتظار (ثانیه)",
+        "rm_http": "حذف خودکار http:// از ورودی",
+        "rm_www": "حذف خودکار .www از ورودی",
+        "smart_ip": "فیلتر آی‌پی‌های داخلی و نامعتبر",
+        "strict_ping": "حالت سخت‌گیرانه (الزام دریافت پینگ سالم)",
+        "auto_scroll": "اسکرول خودکار جدول هنگام اسکن",
+        "auto_save": "ساخت خودکار config.json پس از اتمام",
+        "btn_save": "💾 ذخیره تنظیمات", "btn_stop": "توقف", "btn_start": "🚀 شروع رادار",
+        "stat_scans": "تست‌های انجام شده", "stat_success": "موفق (متصل)", "stat_ping": "فقط پینگ", "stat_down": "مسدود / خطا",
+        "btn_export_json": "ساخت config.json", "btn_export_csv": "خروجی گروهی (CSV)", "btn_export_custom": "⚙ خروجی سفارشی",
+        "lbl_sort": "برای مرتب‌سازی روی عنوان ستون‌ها کلیک کنید",
+        "col_select": "تیک", "col_target": "تارگت", "col_ip": "آی‌پی", "col_port": "پورت", "col_ping": "پینگ", "col_sni": "هندشیک", "col_cdn": "تأمین‌کننده", "col_speed": "سرعت", "col_status": "نتیجه نهایی",
+        "ready": "رادار آماده اسکن شبکه است...",
+        "msg_error": "خطا", "msg_success": "موفقیت", "msg_no_target": "تارگت معتبری وارد نشده است.",
+        "msg_copied": "در کلیپ‌بورد کپی شد.", "msg_empty_clipboard": "کلیپ‌بورد خالی است.",
+        "st_sni_usable": "✔ اس‌ان‌آی متصل", "st_tcp_ok": "✔ پورت باز", "st_ping_only": "◐ فقط پینگ", "st_down": "✖ مسدود", "st_timeout": "تایم‌اوت", "st_filtered": "✖ فیلتر شده",
+        "st_valid": "معتبر", "st_invalid": "ناموفق",
+        "targets_count": "تارگت‌های یکتا:"
+    },
+    "en": {
+        "title": f"Advanced SNI Radar - {VERSION}",
+        "telegram": "Telegram Channel",
+        "update": "Check for Updates",
+        "lang_toggle": "فارسی",
+        "theme_0": "☀️ Light", "theme_1": "🌙 Dark", "theme_2": "🌑 Pitch Black",
+        "input_label": "Input (Domains, IPs, CIDRs):",
+        "paste": "📋 Paste", "browse": "📁 Browse File", "clear": "🗑 Clear", "dedup": "✨ Remove Dupes",
+        "settings": "Network Radar Settings",
+        "default_sni": "Default SNI (for IPs):",
+        "target_ports": "Target Ports (Comma/Newline):",
+        "max_cidr": "Max CIDR Expand:",
+        "threads": "Scan Speed (Threads):",
+        "timeout": "Timeout (Seconds):",
+        "rm_http": "Auto remove http:// from input",
+        "rm_www": "Auto remove .www from input",
+        "smart_ip": "Filter Private/Invalid IPs",
+        "strict_ping": "Strict Mode (Require successful Ping)",
+        "auto_scroll": "Auto-scroll table during scan",
+        "auto_save": "Auto-create config.json on finish",
+        "btn_save": "💾 Save Settings", "btn_stop": "Stop", "btn_start": "🚀 Start Radar",
+        "stat_scans": "Scans Performed", "stat_success": "Success (Connected)", "stat_ping": "Ping Only", "stat_down": "Blocked / Error",
+        "btn_export_json": "Create config.json", "btn_export_csv": "Export All (CSV)", "btn_export_custom": "⚙ Custom Export",
+        "lbl_sort": "Click on column headers to sort results",
+        "col_select": "Sel", "col_target": "Target", "col_ip": "IP Address", "col_port": "Port", "col_ping": "Ping", "col_sni": "Handshake", "col_cdn": "Provider", "col_speed": "Speed", "col_status": "Final Verdict",
+        "ready": "Radar is ready to scan the network...",
+        "msg_error": "Error", "msg_success": "Success", "msg_no_target": "No valid targets entered.",
+        "msg_copied": "Copied to clipboard.", "msg_empty_clipboard": "Clipboard is empty.",
+        "st_sni_usable": "✔ SNI Usable", "st_tcp_ok": "✔ Port Open", "st_ping_only": "◐ Ping Only", "st_down": "✖ Blocked", "st_timeout": "Timeout", "st_filtered": "✖ Filtered",
+        "st_valid": "Valid", "st_invalid": "Failed",
+        "targets_count": "Unique Targets:"
+    }
+}
 
 class SNIScannerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("رادار پیشرفته اس‌ان‌آی")
-        self.root.geometry("1200x850")
+        self.root.geometry("1250x850")
         
-        self.is_dark = False
+        # State variables
+        self.current_lang = "fa"
+        self.theme_state = 0 # 0: Light, 1: Dark, 2: Pitch Black
         
         self.font_main = ("Tahoma", 9)
         self.font_bold = ("Tahoma", 9, "bold")
@@ -54,15 +129,17 @@ class SNIScannerApp:
         self.result_queue = queue.Queue()
         self.stop_event = threading.Event()
         
-        self.stat_total = 0
+        self.stat_total_scans = 0
         self.stat_checked = 0
         self.stat_success = 0
         self.stat_ping_only = 0
         self.stat_down = 0
+        self.stat_unique_targets = 0
         
         self.setup_ui()
+        self.load_settings()
         self.apply_theme()
-        self.load_settings()  # فراخوانی تنظیمات ذخیره شده
+        self.apply_language()
         self.root.after(100, self.process_queue)
 
     def setup_ui(self):
@@ -70,100 +147,120 @@ class SNIScannerApp:
         self.root.columnconfigure(1, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        # ====== پنل راست (تنظیمات و ورودی) ======
+        # ====== پنل راست ======
         self.right_panel = ttk.Frame(self.root)
         self.right_panel.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         self.right_panel.columnconfigure(0, weight=1)
 
-        # هدر راست
+        # Header Right
         header_frame = ttk.Frame(self.right_panel)
         header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
-        header_frame.columnconfigure(1, weight=1)
+        header_frame.columnconfigure(2, weight=1)
         
-        self.btn_theme = ttk.Button(header_frame, text="🌙 تاریک", command=self.toggle_theme, width=10)
-        self.btn_theme.grid(row=0, column=0, sticky="w")
-        
-        lbl_tg = tk.Label(header_frame, text="کانال تلگرام", font=("Tahoma", 9, "underline"), fg="#0d6efd", cursor="hand2")
-        lbl_tg.grid(row=0, column=1, sticky="w", padx=10)
-        lbl_tg.bind("<Button-1>", lambda e: webbrowser.open("https://t.me/vpnclashfa"))
-        
-        lbl_input = ttk.Label(header_frame, text=":ورودی (دامنه‌، آی‌پی، CIDR)", font=self.font_bold)
-        lbl_input.grid(row=0, column=2, sticky="e")
+        self.btn_theme = ttk.Button(header_frame, command=self.cycle_theme, width=12)
+        self.btn_theme.grid(row=0, column=0, sticky="w", padx=(0,2))
 
-        # ابزارهای ورودی
+        self.btn_lang = ttk.Button(header_frame, command=self.toggle_language, width=8)
+        self.btn_lang.grid(row=0, column=1, sticky="w", padx=2)
+        
+        self.lbl_update = tk.Label(header_frame, font=("Tahoma", 8, "underline"), fg="#198754", cursor="hand2")
+        self.lbl_update.grid(row=0, column=2, sticky="w", padx=5)
+        self.lbl_update.bind("<Button-1>", lambda e: self.check_for_updates())
+
+        self.lbl_tg = tk.Label(header_frame, font=("Tahoma", 8, "underline"), fg="#0d6efd", cursor="hand2")
+        self.lbl_tg.grid(row=0, column=3, sticky="e", padx=5)
+        self.lbl_tg.bind("<Button-1>", lambda e: webbrowser.open("https://t.me/vpnclashfa"))
+        
+        self.lbl_input_title = ttk.Label(header_frame, font=self.font_bold)
+        self.lbl_input_title.grid(row=0, column=4, sticky="e")
+
+        # Input Tools
         input_tools = ttk.Frame(self.right_panel)
         input_tools.grid(row=1, column=0, sticky="ew", pady=(0, 2))
         
-        btn_paste = ttk.Button(input_tools, text="📋 پیست", command=self.paste_from_clipboard)
-        btn_paste.pack(side="left", padx=2)
+        self.btn_paste = ttk.Button(input_tools, command=self.paste_from_clipboard)
+        self.btn_paste.pack(side="left", padx=2)
         
-        btn_browse = ttk.Button(input_tools, text="📁 انتخاب فایل", command=self.load_from_file)
-        btn_browse.pack(side="left", padx=2)
+        self.btn_browse = ttk.Button(input_tools, command=self.load_from_file)
+        self.btn_browse.pack(side="left", padx=2)
         
-        btn_clear = ttk.Button(input_tools, text="🗑 پاک کردن", command=lambda: self.text_input.delete("1.0", tk.END))
-        btn_clear.pack(side="right", padx=2)
+        self.btn_dedup = ttk.Button(input_tools, command=self.remove_duplicates)
+        self.btn_dedup.pack(side="left", padx=2)
+
+        self.btn_clear = ttk.Button(input_tools, command=lambda: self.text_input.delete("1.0", tk.END))
+        self.btn_clear.pack(side="right", padx=2)
 
         self.text_input = tk.Text(self.right_panel, width=40, height=10, font=("Consolas", 10))
         self.text_input.grid(row=2, column=0, sticky="nsew", pady=(0, 10))
         self.right_panel.rowconfigure(2, weight=1)
 
         # ====== پنل تنظیمات ======
-        self.settings_frame = ttk.LabelFrame(self.right_panel, text=" تنظیمات رادار شبکه ", padding=10)
+        self.settings_frame = ttk.LabelFrame(self.right_panel, padding=10)
         self.settings_frame.grid(row=3, column=0, sticky="nsew")
         self.settings_frame.columnconfigure(1, weight=1)
 
         row_idx = 0
         self.default_sni_var = tk.StringVar(value="yahoo.com")
         ttk.Entry(self.settings_frame, textvariable=self.default_sni_var, justify="left").grid(row=row_idx, column=0, sticky="ew", padx=5, pady=5)
-        ttk.Label(self.settings_frame, text=":SNI پیش‌فرض (برای آی‌پی‌ها)").grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        self.lbl_set_sni = ttk.Label(self.settings_frame)
+        self.lbl_set_sni.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
         
         row_idx += 1
         ports_frame = ttk.Frame(self.settings_frame)
         ports_frame.grid(row=row_idx, column=0, sticky="ew", padx=5, pady=5)
-        self.ports_input = tk.Text(ports_frame, height=2, width=25, font=("Consolas", 10))
-        self.ports_input.insert("1.0", "443, 8443, 2053")
+        self.ports_input = tk.Text(ports_frame, height=3, width=25, font=("Consolas", 10))
+        self.ports_input.insert("1.0", DEFAULT_PORTS)
         self.ports_input.pack(side="left", fill="x", expand=True)
-        ttk.Label(self.settings_frame, text=":پورت‌های هدف").grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        self.lbl_set_ports = ttk.Label(self.settings_frame)
+        self.lbl_set_ports.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
 
         row_idx += 1
         self.cidr_limit_var = tk.IntVar(value=256)
         ttk.Entry(self.settings_frame, textvariable=self.cidr_limit_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=5)
-        ttk.Label(self.settings_frame, text=":حداکثر بسط رنج (CIDR)").grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        self.lbl_set_cidr = ttk.Label(self.settings_frame)
+        self.lbl_set_cidr.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
 
         row_idx += 1
         self.threads_var = tk.IntVar(value=20)
         ttk.Entry(self.settings_frame, textvariable=self.threads_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=5)
-        ttk.Label(self.settings_frame, text=":سرعت اسکن (موازی)").grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        self.lbl_set_threads = ttk.Label(self.settings_frame)
+        self.lbl_set_threads.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
 
         row_idx += 1
         self.timeout_var = tk.DoubleVar(value=2.0)
         ttk.Entry(self.settings_frame, textvariable=self.timeout_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=5)
-        ttk.Label(self.settings_frame, text=":زمان انتظار (ثانیه)").grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        self.lbl_set_timeout = ttk.Label(self.settings_frame)
+        self.lbl_set_timeout.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
 
-        # چک‌باکس‌های فیلتر
         row_idx += 1
         self.remove_http_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.settings_frame, text="حذف خودکار http:// و https:// از ورودی", variable=self.remove_http_var).grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
+        self.chk_rm_http = ttk.Checkbutton(self.settings_frame, variable=self.remove_http_var)
+        self.chk_rm_http.grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
 
         row_idx += 1
         self.remove_www_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.settings_frame, text="حذف خودکار .www از ورودی", variable=self.remove_www_var).grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
+        self.chk_rm_www = ttk.Checkbutton(self.settings_frame, variable=self.remove_www_var)
+        self.chk_rm_www.grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
 
         row_idx += 1
         self.smart_ip_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.settings_frame, text="فیلتر آی‌پی‌های داخلی و نامعتبر", variable=self.smart_ip_var).grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
+        self.chk_smart_ip = ttk.Checkbutton(self.settings_frame, variable=self.smart_ip_var)
+        self.chk_smart_ip.grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
 
         row_idx += 1
         self.strict_ping_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(self.settings_frame, text="حالت سخت‌گیرانه (الزام دریافت پینگ سالم)", variable=self.strict_ping_var).grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
+        self.chk_strict_ping = ttk.Checkbutton(self.settings_frame, variable=self.strict_ping_var)
+        self.chk_strict_ping.grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
 
         row_idx += 1
         self.auto_scroll_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.settings_frame, text="اسکرول خودکار جدول هنگام اسکن", variable=self.auto_scroll_var).grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
+        self.chk_auto_scroll = ttk.Checkbutton(self.settings_frame, variable=self.auto_scroll_var)
+        self.chk_auto_scroll.grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
 
         row_idx += 1
         self.auto_save_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.settings_frame, text="ساخت خودکار config.json پس از اتمام", variable=self.auto_save_var).grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
+        self.chk_auto_save = ttk.Checkbutton(self.settings_frame, variable=self.auto_save_var)
+        self.chk_auto_save.grid(row=row_idx, column=0, columnspan=2, sticky="e", pady=2)
 
         # دکمه‌های کنترل
         btn_frame = ttk.Frame(self.right_panel)
@@ -172,59 +269,53 @@ class SNIScannerApp:
         btn_frame.columnconfigure(1, weight=1)
         btn_frame.columnconfigure(2, weight=1)
 
-        self.btn_save_settings = ttk.Button(btn_frame, text="💾 ذخیره تنظیمات", command=self.save_settings)
+        self.btn_save_settings = ttk.Button(btn_frame, command=self.save_settings)
         self.btn_save_settings.grid(row=0, column=0, sticky="nsew", padx=2)
 
-        self.btn_stop = ttk.Button(btn_frame, text="توقف", command=self.stop_scan, state="disabled")
+        self.btn_stop = ttk.Button(btn_frame, command=self.stop_scan, state="disabled")
         self.btn_stop.grid(row=0, column=1, sticky="nsew", padx=2)
 
-        self.btn_start = ttk.Button(btn_frame, text="🚀 شروع رادار", style="Primary.TButton", command=self.start_scan)
+        self.btn_start = ttk.Button(btn_frame, style="Primary.TButton", command=self.start_scan)
         self.btn_start.grid(row=0, column=2, sticky="nsew", padx=2)
 
-        # ====== پنل چپ (نتایج و آمار) ======
+        # ====== پنل چپ ======
         self.left_panel = ttk.Frame(self.root)
         self.left_panel.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         self.left_panel.columnconfigure(0, weight=1)
         self.left_panel.rowconfigure(2, weight=1)
 
         # داشبورد آمار زنده
-        self.dash_frame = tk.Frame(self.left_panel, bg="#f8f9fa")
+        self.dash_frame = tk.Frame(self.left_panel)
         self.dash_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         
-        self.lbl_stat_total = self.create_metric_card(self.dash_frame, "بررسی شده", "#e9ecef", "#495057")
-        self.lbl_stat_success = self.create_metric_card(self.dash_frame, "موفق (متصل)", "#d1e7dd", "#0f5132")
-        self.lbl_stat_ping = self.create_metric_card(self.dash_frame, "فقط پینگ", "#cff4fc", "#055160")
-        self.lbl_stat_down = self.create_metric_card(self.dash_frame, "مسدود / خطا", "#f8d7da", "#842029")
+        self.stat_frames = []
+        self.lbl_stat_total_val, self.lbl_stat_total_title = self.create_metric_card(self.dash_frame, "#e9ecef", "#495057")
+        self.lbl_stat_success_val, self.lbl_stat_success_title = self.create_metric_card(self.dash_frame, "#d1e7dd", "#0f5132")
+        self.lbl_stat_ping_val, self.lbl_stat_ping_title = self.create_metric_card(self.dash_frame, "#cff4fc", "#055160")
+        self.lbl_stat_down_val, self.lbl_stat_down_title = self.create_metric_card(self.dash_frame, "#f8d7da", "#842029")
 
         # ابزارهای بالای جدول
         tools_frame = ttk.Frame(self.left_panel)
         tools_frame.grid(row=1, column=0, sticky="ew", pady=(0, 5))
         
-        self.btn_export = ttk.Button(tools_frame, text="ساخت config.json", style="Success.TButton", command=self.export_config)
-        self.btn_export.pack(side="left", padx=2)
+        self.btn_export_json = ttk.Button(tools_frame, style="Success.TButton", command=self.export_config)
+        self.btn_export_json.pack(side="left", padx=2)
         
-        self.btn_export_csv = ttk.Button(tools_frame, text="خروجی گروهی (CSV)", command=self.export_csv)
+        self.btn_export_csv = ttk.Button(tools_frame, command=self.export_csv)
         self.btn_export_csv.pack(side="left", padx=2)
 
-        self.btn_custom_export = ttk.Button(tools_frame, text="⚙ خروجی سفارشی", command=self.open_custom_export_dialog)
-        self.btn_custom_export.pack(side="left", padx=2)
+        self.btn_export_custom = ttk.Button(tools_frame, command=self.open_custom_export_dialog)
+        self.btn_export_custom.pack(side="left", padx=2)
         
-        self.lbl_results = ttk.Label(tools_frame, text="برای مرتب‌سازی روی عنوان ستون‌ها کلیک کنید", font=("Tahoma", 8))
-        self.lbl_results.pack(side="right")
+        self.lbl_targets_count = ttk.Label(tools_frame, font=self.font_bold, foreground="#198754")
+        self.lbl_targets_count.pack(side="left", padx=15)
+
+        self.lbl_sort_guide = ttk.Label(tools_frame, font=("Tahoma", 8))
+        self.lbl_sort_guide.pack(side="right")
 
         # جدول نتایج
         columns = ("select", "target", "ip", "port", "ping", "sni", "cdn", "speed", "status")
         self.tree = ttk.Treeview(self.left_panel, columns=columns, show="headings")
-        
-        self.tree.heading("select", text="تیک")
-        self.tree.heading("target", text="تارگت", command=lambda: self.treeview_sort_column("target", False))
-        self.tree.heading("ip", text="آی‌پی", command=lambda: self.treeview_sort_column("ip", False))
-        self.tree.heading("port", text="پورت", command=lambda: self.treeview_sort_column("port", False))
-        self.tree.heading("ping", text="پینگ", command=lambda: self.treeview_sort_column("ping", False))
-        self.tree.heading("sni", text="هندشیک", command=lambda: self.treeview_sort_column("sni", False))
-        self.tree.heading("cdn", text="تأمین‌کننده", command=lambda: self.treeview_sort_column("cdn", False))
-        self.tree.heading("speed", text="سرعت", command=lambda: self.treeview_sort_column("speed", False))
-        self.tree.heading("status", text="نتیجه نهایی", command=lambda: self.treeview_sort_column("status", False))
         
         self.tree.column("select", width=40, anchor="center")
         self.tree.column("target", width=120, anchor="w")
@@ -244,8 +335,144 @@ class SNIScannerApp:
 
         self.tree.bind('<ButtonRelease-1>', self.toggle_check)
 
-        self.lbl_status = ttk.Label(self.left_panel, text="رادار آماده اسکن شبکه است...")
+        self.lbl_status = ttk.Label(self.left_panel)
         self.lbl_status.grid(row=3, column=0, sticky="e", pady=5)
+
+    def create_metric_card(self, parent, bg_color, fg_color):
+        frame = tk.Frame(parent, bg=bg_color, bd=1, relief="ridge")
+        frame.pack(side="left", fill="both", expand=True, padx=3)
+        self.stat_frames.append(frame)
+        lbl_val = tk.Label(frame, text="0", font=("Consolas", 15, "bold"), bg=bg_color, fg=fg_color)
+        lbl_val.pack(pady=(8,0))
+        lbl_title = tk.Label(frame, font=("Tahoma", 8, "bold"), bg=bg_color, fg=fg_color)
+        lbl_title.pack(pady=(0,8))
+        return lbl_val, lbl_title
+
+    def apply_language(self):
+        t = LANG[self.current_lang]
+        self.root.title(t["title"])
+        self.lbl_tg.configure(text=t["telegram"])
+        self.lbl_update.configure(text=t["update"])
+        self.btn_lang.configure(text=t["lang_toggle"])
+        self.btn_theme.configure(text=t[f"theme_{self.theme_state}"])
+        self.lbl_input_title.configure(text=t["input_label"])
+        
+        self.btn_paste.configure(text=t["paste"])
+        self.btn_browse.configure(text=t["browse"])
+        self.btn_clear.configure(text=t["clear"])
+        self.btn_dedup.configure(text=t["dedup"])
+        
+        self.settings_frame.configure(text=f" {t['settings']} ")
+        self.lbl_set_sni.configure(text=t["default_sni"])
+        self.lbl_set_ports.configure(text=t["target_ports"])
+        self.lbl_set_cidr.configure(text=t["max_cidr"])
+        self.lbl_set_threads.configure(text=t["threads"])
+        self.lbl_set_timeout.configure(text=t["timeout"])
+        
+        self.chk_rm_http.configure(text=t["rm_http"])
+        self.chk_rm_www.configure(text=t["rm_www"])
+        self.chk_smart_ip.configure(text=t["smart_ip"])
+        self.chk_strict_ping.configure(text=t["strict_ping"])
+        self.chk_auto_scroll.configure(text=t["auto_scroll"])
+        self.chk_auto_save.configure(text=t["auto_save"])
+        
+        self.btn_save_settings.configure(text=t["btn_save"])
+        self.btn_stop.configure(text=t["btn_stop"])
+        self.btn_start.configure(text=t["btn_start"])
+        
+        self.lbl_stat_total_title.configure(text=t["stat_scans"])
+        self.lbl_stat_success_title.configure(text=t["stat_success"])
+        self.lbl_stat_ping_title.configure(text=t["stat_ping"])
+        self.lbl_stat_down_title.configure(text=t["stat_down"])
+        
+        self.btn_export_json.configure(text=t["btn_export_json"])
+        self.btn_export_csv.configure(text=t["btn_export_csv"])
+        self.btn_export_custom.configure(text=t["btn_export_custom"])
+        self.lbl_sort_guide.configure(text=t["lbl_sort"])
+        self.lbl_targets_count.configure(text=f"{t['targets_count']} {self.stat_unique_targets}")
+        
+        if not self.is_scanning:
+            self.lbl_status.configure(text=t["ready"])
+
+        # آپدیت هدرهای جدول
+        for col, key in [("select","col_select"), ("target","col_target"), ("ip","col_ip"), ("port","col_port"), 
+                         ("ping","col_ping"), ("sni","col_sni"), ("cdn","col_cdn"), ("speed","col_speed"), ("status","col_status")]:
+            self.tree.heading(col, text=t[key], command=lambda c=col: self.treeview_sort_column(c, False))
+
+    def toggle_language(self):
+        self.current_lang = "en" if self.current_lang == "fa" else "fa"
+        self.apply_language()
+
+    def cycle_theme(self):
+        self.theme_state = (self.theme_state + 1) % 3
+        self.apply_theme()
+        self.apply_language()
+
+    def apply_theme(self):
+        self.style.configure("Primary.TButton", font=self.font_bold, background="#0d6efd", foreground="white", padding=6)
+        self.style.map("Primary.TButton", background=[("active", "#0b5ed7")])
+
+        if self.theme_state == 0: # Light
+            bg_color = "#f8f9fa"
+            fg_color = "#212529"
+            tree_bg = "white"
+            tree_fg = "#212529"
+            input_bg = "white"
+            dash_bgs = ["#e9ecef", "#d1e7dd", "#cff4fc", "#f8d7da"]
+            dash_fgs = ["#495057", "#0f5132", "#055160", "#842029"]
+        elif self.theme_state == 1: # Dark
+            bg_color = "#212529"
+            fg_color = "#f8f9fa"
+            tree_bg = "#343a40"
+            tree_fg = "#f8f9fa"
+            input_bg = "#495057"
+            dash_bgs = ["#343a40", "#198754", "#0dcaf0", "#dc3545"]
+            dash_fgs = ["#f8f9fa", "#fff", "#000", "#fff"]
+        else: # Pitch Black
+            bg_color = "#000000"
+            fg_color = "#a0a0a0"
+            tree_bg = "#050505"
+            tree_fg = "#b0b0b0"
+            input_bg = "#111111"
+            dash_bgs = ["#111111", "#051f0f", "#001a22", "#2b0a0a"]
+            dash_fgs = ["#a0a0a0", "#34d399", "#38bdf8", "#f87171"]
+
+        self.root.configure(bg=bg_color)
+        self.dash_frame.configure(bg=bg_color)
+        self.style.configure("TFrame", background=bg_color)
+        self.style.configure("TLabelframe", background=bg_color, foreground=fg_color)
+        self.style.configure("TLabelframe.Label", background=bg_color, foreground=fg_color)
+        self.style.configure("TLabel", background=bg_color, foreground=fg_color)
+        self.style.configure("TCheckbutton", background=bg_color, foreground=fg_color)
+        
+        self.style.configure("Treeview", background=tree_bg, foreground=tree_fg, fieldbackground=tree_bg)
+        self.style.map('Treeview', background=[('selected', '#2a2a2a' if self.theme_state==2 else '#0078D7')])
+        
+        self.text_input.configure(bg=input_bg, fg=fg_color, insertbackground=fg_color)
+        self.ports_input.configure(bg=input_bg, fg=fg_color, insertbackground=fg_color)
+
+        # Update metric cards
+        for i, frame in enumerate(self.stat_frames):
+            frame.configure(bg=dash_bgs[i])
+            for widget in frame.winfo_children():
+                widget.configure(bg=dash_bgs[i], fg=dash_fgs[i])
+
+    def check_for_updates(self):
+        try:
+            req = urllib.request.Request(GITHUB_API_URL, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode())
+                latest_version = data.get("tag_name", VERSION)
+                if latest_version != VERSION:
+                    msg = f"نسخه جدید ({latest_version}) منتشر شده است.\nآیا می‌خواهید به صفحه دانلود بروید؟" if self.current_lang=="fa" else f"New version ({latest_version}) is available.\nDo you want to open the download page?"
+                    if messagebox.askyesno("Update Available", msg):
+                        webbrowser.open(data.get("html_url", ""))
+                else:
+                    msg = "شما از آخرین نسخه استفاده می‌کنید." if self.current_lang=="fa" else "You are using the latest version."
+                    messagebox.showinfo("Up to date", msg)
+        except Exception as e:
+            msg = "خطا در بررسی بروزرسانی." if self.current_lang=="fa" else "Error checking for updates."
+            messagebox.showerror("Error", f"{msg}\n{e}")
 
     def save_settings(self):
         settings = {
@@ -261,14 +488,15 @@ class SNIScannerApp:
             "strict_ping": self.strict_ping_var.get(),
             "auto_scroll": self.auto_scroll_var.get(),
             "auto_save": self.auto_save_var.get(),
-            "is_dark": self.is_dark
+            "theme_state": self.theme_state,
+            "lang": self.current_lang
         }
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(settings, f, ensure_ascii=False, indent=4)
-            messagebox.showinfo("موفقیت", "تنظیمات و لیست تارگت‌ها با موفقیت ذخیره شد.")
+            messagebox.showinfo(LANG[self.current_lang]["msg_success"], "Settings saved.")
         except Exception as e:
-            messagebox.showerror("خطا", f"خطا در ذخیره تنظیمات: {e}")
+            messagebox.showerror(LANG[self.current_lang]["msg_error"], str(e))
 
     def load_settings(self):
         if not os.path.exists(SETTINGS_FILE): return
@@ -280,7 +508,7 @@ class SNIScannerApp:
             self.text_input.insert("1.0", settings.get("targets", ""))
             
             self.ports_input.delete("1.0", tk.END)
-            self.ports_input.insert("1.0", settings.get("ports", "443, 8443, 2053"))
+            self.ports_input.insert("1.0", settings.get("ports", DEFAULT_PORTS))
             
             self.default_sni_var.set(settings.get("default_sni", "yahoo.com"))
             self.cidr_limit_var.set(settings.get("cidr_limit", 256))
@@ -293,12 +521,10 @@ class SNIScannerApp:
             self.auto_scroll_var.set(settings.get("auto_scroll", True))
             self.auto_save_var.set(settings.get("auto_save", True))
             
-            # بازیابی تم
-            if settings.get("is_dark", False) != self.is_dark:
-                self.toggle_theme()
-                
+            self.theme_state = settings.get("theme_state", 0)
+            self.current_lang = settings.get("lang", "fa")
         except Exception:
-            pass # در صورت خرابی فایل از خطاهای جزئی رد می‌شویم
+            pass
 
     def paste_from_clipboard(self):
         try:
@@ -306,7 +532,7 @@ class SNIScannerApp:
             if clipboard_text:
                 self.text_input.insert(tk.END, clipboard_text + "\n")
         except tk.TclError:
-            messagebox.showwarning("خطا", "کلیپ‌بورد خالی است یا متن معتبری ندارد.")
+            messagebox.showwarning(LANG[self.current_lang]["msg_error"], LANG[self.current_lang]["msg_empty_clipboard"])
 
     def load_from_file(self):
         file_path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
@@ -315,7 +541,19 @@ class SNIScannerApp:
                 with open(file_path, "r", encoding="utf-8") as f:
                     self.text_input.insert(tk.END, f.read() + "\n")
             except Exception as e:
-                messagebox.showerror("خطا", f"خطا در خواندن فایل: {e}")
+                messagebox.showerror(LANG[self.current_lang]["msg_error"], str(e))
+
+    def remove_duplicates(self):
+        lines = self.text_input.get("1.0", tk.END).split('\n')
+        unique = list(dict.fromkeys(l.strip() for l in lines if l.strip()))
+        self.text_input.delete("1.0", tk.END)
+        self.text_input.insert("1.0", '\n'.join(unique) + '\n')
+
+    def update_metrics_ui(self):
+        self.lbl_stat_total_val.configure(text=f"{self.stat_checked} / {self.stat_total_scans}")
+        self.lbl_stat_success_val.configure(text=str(self.stat_success))
+        self.lbl_stat_ping_val.configure(text=str(self.stat_ping_only))
+        self.lbl_stat_down_val.configure(text=str(self.stat_down))
 
     def treeview_sort_column(self, col, reverse):
         l =[(self.tree.set(k, col), k) for k in self.tree.get_children('')]
@@ -326,102 +564,24 @@ class SNIScannerApp:
             l.sort(key=lambda t: extract_number(t[0]), reverse=reverse)
         else:
             l.sort(reverse=reverse)
-            
         for index, (val, k) in enumerate(l):
             self.tree.move(k, '', index)
-            
         self.tree.heading(col, command=lambda: self.treeview_sort_column(col, not reverse))
-        self.lbl_status.configure(text=f"نتایج بر اساس ستون '{col}' مرتب شدند.")
 
     def sort_results_by_default(self):
         items =[]
         for k in self.tree.get_children(""):
             vals = self.tree.item(k, "values")
-            # امتیازدهی برای مرتب‌سازی: اس‌ان‌آی متصل = ۳، پورت باز = ۲، فقط پینگ = ۱، مسدود = ۰
-            status_score = 3 if "اس‌ان‌آی متصل" in vals[8] else (2 if "پورت باز" in vals[8] else (1 if "فقط پینگ" in vals[8] else 0))
+            st_text = vals[8]
+            t = LANG[self.current_lang]
+            score = 3 if t["st_sni_usable"] in st_text else (2 if t["st_tcp_ok"] in st_text else (1 if t["st_ping_only"] in st_text else 0))
             ping_val = float(vals[4].split()[0]) if "ms" in vals[4] else 999999.0
             speed_val = float(vals[7].split()[0]) if "KB" in vals[7] else 0.0
-            
-            items.append((status_score, -ping_val, speed_val, k))
+            items.append((score, -ping_val, speed_val, k))
             
         items.sort(reverse=True, key=lambda x: (x[0], x[1], x[2]))
-        
         for index, (_, _, _, k) in enumerate(items):
             self.tree.move(k, '', index)
-
-    def create_metric_card(self, parent, title, bg_color, fg_color):
-        frame = tk.Frame(parent, bg=bg_color, bd=1, relief="ridge")
-        frame.pack(side="left", fill="both", expand=True, padx=3)
-        lbl_val = tk.Label(frame, text="0", font=("Consolas", 15, "bold"), bg=bg_color, fg=fg_color)
-        lbl_val.pack(pady=(8,0))
-        lbl_title = tk.Label(frame, text=title, font=("Tahoma", 8, "bold"), bg=bg_color, fg=fg_color)
-        lbl_title.pack(pady=(0,8))
-        return lbl_val
-
-    def update_metrics_ui(self):
-        self.lbl_stat_total.configure(text=f"{self.stat_checked} / {self.stat_total}")
-        self.lbl_stat_success.configure(text=str(self.stat_success))
-        self.lbl_stat_ping.configure(text=str(self.stat_ping_only))
-        self.lbl_stat_down.configure(text=str(self.stat_down))
-
-    def apply_theme(self):
-        # استایل دکمه شروع رادار (Primary CTA)
-        self.style.configure("Primary.TButton", font=self.font_bold, background="#0d6efd", foreground="white", padding=6)
-        self.style.map("Primary.TButton", background=[("active", "#0b5ed7")])
-
-        if self.is_dark:
-            bg_color = "#212529"
-            fg_color = "#f8f9fa"
-            tree_bg = "#343a40"
-            tree_fg = "#f8f9fa"
-            input_bg = "#495057"
-            self.btn_theme.configure(text="☀️ روشن")
-            self.lbl_results.configure(foreground="#6ea8fe")
-            self.lbl_status.configure(foreground="#adb5bd")
-            self.dash_frame.configure(bg=bg_color)
-        else:
-            bg_color = "#f8f9fa"
-            fg_color = "#212529"
-            tree_bg = "white"
-            tree_fg = "#212529"
-            input_bg = "white"
-            self.btn_theme.configure(text="🌙 تاریک")
-            self.lbl_results.configure(foreground="#0d6efd")
-            self.lbl_status.configure(foreground="#6c757d")
-            self.dash_frame.configure(bg=bg_color)
-
-        self.root.configure(bg=bg_color)
-        self.style.configure("TFrame", background=bg_color)
-        self.style.configure("TLabelframe", background=bg_color, foreground=fg_color)
-        self.style.configure("TLabelframe.Label", background=bg_color, foreground=fg_color)
-        self.style.configure("TLabel", background=bg_color, foreground=fg_color)
-        self.style.configure("TCheckbutton", background=bg_color, foreground=fg_color)
-        
-        self.style.configure("Treeview", background=tree_bg, foreground=tree_fg, fieldbackground=tree_bg)
-        self.text_input.configure(bg=input_bg, fg=fg_color, insertbackground=fg_color)
-        self.ports_input.configure(bg=input_bg, fg=fg_color, insertbackground=fg_color)
-
-    def toggle_theme(self):
-        self.is_dark = not self.is_dark
-        self.apply_theme()
-
-    def toggle_check(self, event):
-        region = self.tree.identify_region(event.x, event.y)
-        if region == "cell":
-            column = self.tree.identify_column(event.x)
-            if column == '#1': 
-                clicked_item = self.tree.identify_row(event.y)
-                if not clicked_item: return
-                self._check_item(clicked_item)
-
-    def _check_item(self, item_id):
-        for child in self.tree.get_children():
-            vals = list(self.tree.item(child, "values"))
-            if child == item_id:
-                vals[0] = "☑" if vals[0] == "☐" else "☐"
-            else:
-                vals[0] = "☐"
-            self.tree.item(child, values=vals)
 
     def is_valid_ip(self, ip_str):
         if not self.smart_ip_var.get(): return True
@@ -438,7 +598,7 @@ class SNIScannerApp:
             for prefix in prefixes:
                 if ip_str.startswith(prefix):
                     return cdn_name
-        return "نامشخص"
+        return "Unknown" if self.current_lang=="en" else "نامشخص"
 
     def icmp_ping(self, ip, timeout):
         param = '-n' if platform.system().lower() == 'windows' else '-c'
@@ -508,6 +668,7 @@ class SNIScannerApp:
         target_label, test_host, sni_to_use, port = task
         timeout_val = self.timeout_var.get()
         strict_ping = self.strict_ping_var.get()
+        t = LANG[self.current_lang]
 
         ips_to_test =[]
         try:
@@ -526,7 +687,7 @@ class SNIScannerApp:
         if not valid_ips:
             self.result_queue.put({
                 'target': target_label, 'ip': '-', 'port': port, 'ping': '-', 
-                'sni': '-', 'cdn': '-', 'speed': '-', 'status': 'خطای نام/نامعتبر', 'cat': 'down'
+                'sni': '-', 'cdn': '-', 'speed': '-', 'status': 'DNS Error', 'cat': 'down'
             })
             return
 
@@ -538,8 +699,8 @@ class SNIScannerApp:
             
             if strict_ping and not ping_ok:
                 self.result_queue.put({
-                    'target': target_label, 'ip': ip, 'port': port, 'ping': 'تایم‌اوت', 
-                    'sni': '-', 'cdn': cdn_name, 'speed': '-', 'status': '✖ فیلتر شده (سخت‌گیرانه)', 'cat': 'down'
+                    'target': target_label, 'ip': ip, 'port': port, 'ping': t["st_timeout"], 
+                    'sni': '-', 'cdn': cdn_name, 'speed': '-', 'status': t["st_filtered"], 'cat': 'down'
                 })
                 continue
 
@@ -563,22 +724,22 @@ class SNIScannerApp:
 
             if tls_ok:
                 speed_kb = f"{self.measure_speed(ip, port, sni_to_use, timeout_val)} KB/s"
-                status = "✔ اس‌ان‌آی متصل"
+                status = t["st_sni_usable"]
                 cat = "success"
             elif tcp_ok:
-                status = "✔ پورت باز"
+                status = t["st_tcp_ok"]
                 cat = "success"
             elif ping_ok:
-                status = "◐ فقط پینگ"
+                status = t["st_ping_only"]
                 cat = "ping_only"
             else:
-                status = "✖ مسدود"
+                status = t["st_down"]
                 cat = "down"
 
             self.result_queue.put({
                 'target': target_label, 'ip': ip, 'port': port, 
-                'ping': f"{ping_ms} ms" if ping_ok else "تایم‌اوت", 
-                'sni': 'معتبر' if tls_ok else ('ناموفق' if tcp_ok else '-'), 
+                'ping': f"{ping_ms} ms" if ping_ok else t["st_timeout"], 
+                'sni': t["st_valid"] if tls_ok else (t["st_invalid"] if tcp_ok else '-'), 
                 'cdn': cdn_name, 'speed': speed_kb, 'status': status, 'cat': cat, 'sni_used': sni_to_use
             })
 
@@ -587,14 +748,19 @@ class SNIScannerApp:
         default_sni = self.default_sni_var.get().strip()
         max_cidr = self.cidr_limit_var.get()
         
+        # پارس کردن پورت‌ها (پشتیبانی از خط جدید و کاما)
         raw_ports = self.ports_input.get("1.0", tk.END).replace('\n', ',').split(',')
         ports =[int(p.strip()) for p in raw_ports if p.strip().isdigit() and 0 < int(p.strip()) <= 65535]
         if not ports: ports = [443]
 
+        unique_targets_set = set()
         tasks =[]
+        
         for line in raw_lines:
             cleaned_line = self.clean_target(line)
             if not cleaned_line: continue
+            
+            unique_targets_set.add(cleaned_line)
 
             try:
                 if '/' in cleaned_line:
@@ -616,27 +782,31 @@ class SNIScannerApp:
             for p in ports: tasks.append((cleaned_line, cleaned_line, cleaned_line, p))
 
         if not tasks:
-            messagebox.showwarning("خطا", "تارگت معتبری وارد نشده است.")
+            messagebox.showwarning(LANG[self.current_lang]["msg_error"], LANG[self.current_lang]["msg_no_target"])
             return
 
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        self.stat_total = len(tasks)
+        self.stat_unique_targets = len(unique_targets_set)
+        self.stat_total_scans = len(tasks)
         self.stat_checked = 0
         self.stat_success = 0
         self.stat_ping_only = 0
         self.stat_down = 0
+        
+        self.lbl_targets_count.configure(text=f"{LANG[self.current_lang]['targets_count']} {self.stat_unique_targets}")
         self.update_metrics_ui()
 
         self.is_scanning = True
         self.stop_event.clear()
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
-        self.btn_export.configure(state="disabled")
+        self.btn_export_json.configure(state="disabled")
         self.btn_export_csv.configure(state="disabled")
-        self.btn_custom_export.configure(state="disabled")
-        self.lbl_status.configure(text=f"در حال اسکن {len(tasks)} هدف در شبکه...")
+        self.btn_export_custom.configure(state="disabled")
+        
+        self.lbl_status.configure(text=f"Scanning {self.stat_total_scans} combinations...")
 
         threads = max(1, self.threads_var.get())
         self.executor = ThreadPoolExecutor(max_workers=threads)
@@ -670,34 +840,27 @@ class SNIScannerApp:
             
             self.tree.item(item_id, text=res.get('sni_used', res['target']))
             
-            # اسکرول خودکار
             if self.auto_scroll_var.get():
                 self.tree.see(item_id)
             
-        self.tree.tag_configure("success", foreground="#198754")
-        self.tree.tag_configure("ping_only", foreground="#0d6efd")
-        self.tree.tag_configure("down", foreground="#dc3545")
+        self.tree.tag_configure("success", foreground="#198754" if self.theme_state!=2 else "#34d399")
+        self.tree.tag_configure("ping_only", foreground="#0d6efd" if self.theme_state!=2 else "#38bdf8")
+        self.tree.tag_configure("down", foreground="#dc3545" if self.theme_state!=2 else "#f87171")
         
         self.root.after(100, self.process_queue)
 
     def stop_scan(self):
         self.stop_event.set()
-        self.lbl_status.configure(text="در حال لغو عملیات...")
 
     def finish_scan(self):
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
-        self.btn_export.configure(state="normal")
+        self.btn_export_json.configure(state="normal")
         self.btn_export_csv.configure(state="normal")
-        self.btn_custom_export.configure(state="normal")
+        self.btn_export_custom.configure(state="normal")
         
-        # مرتب‌سازی پیش‌فرض (سرعت و کیفیت)
         self.sort_results_by_default()
-        
-        if self.stop_event.is_set():
-            self.lbl_status.configure(text="عملیات متوقف شد. نتایج پیش‌فرض بر اساس سرعت مرتب شدند.")
-        else:
-            self.lbl_status.configure(text="اسکن پایان یافت. نتایج پیش‌فرض بر اساس سرعت مرتب شدند.")
+        self.lbl_status.configure(text="Finished.")
         
         if self.auto_save_var.get():
             for child in self.tree.get_children():
@@ -715,35 +878,28 @@ class SNIScannerApp:
                 break
                 
         if not selected_item:
-            if not auto: messagebox.showwarning("خطا", "هیچ موردی انتخاب نشده است (☑).")
+            if not auto: messagebox.showwarning("Warning", "No item selected (☑).")
             return
 
         vals = self.tree.item(selected_item, "values")
         if "✔" not in vals[8]:
-            if not auto: messagebox.showwarning("خطا", "ردیف انتخابی، پورت باز یا اتصال معتبری ندارد.")
+            if not auto: messagebox.showwarning("Warning", "Selected row does not have a valid connection.")
             return
-
-        ip = vals[2]
-        port = int(vals[3])
-        sni_used = self.tree.item(selected_item, "text")
 
         config_data = {
             "LISTEN_HOST": "0.0.0.0",
             "LISTEN_PORT": 40443,
-            "CONNECT_IP": ip,
-            "CONNECT_PORT": port,
-            "FAKE_SNI": sni_used
+            "CONNECT_IP": vals[2],
+            "CONNECT_PORT": int(vals[3]),
+            "FAKE_SNI": self.tree.item(selected_item, "text")
         }
 
         try:
             with open("config.json", "w", encoding="utf-8") as f:
                 json.dump(config_data, f, indent=2, ensure_ascii=False)
-            if not auto:
-                messagebox.showinfo("موفقیت", "فایل config.json ساخته شد.\n\nمسیر: " + os.path.abspath("config.json"))
-            else:
-                self.lbl_status.configure(text="بهترین سرور انتخاب و config.json آپدیت شد.")
+            if not auto: messagebox.showinfo("Success", "config.json created.")
         except Exception as e:
-            if not auto: messagebox.showerror("خطا", str(e))
+            if not auto: messagebox.showerror("Error", str(e))
 
     def export_csv(self):
         valid_items =[]
@@ -754,84 +910,84 @@ class SNIScannerApp:
                 valid_items.append([vals[1], vals[2], vals[3], vals[4], sni_used, vals[6], vals[7], vals[8]])
 
         if not valid_items:
-            messagebox.showwarning("خطا", "داده موفقی برای خروجی وجود ندارد.")
+            messagebox.showwarning("Warning", "No successful data to export.")
             return
 
         path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="Radar_Export.csv")
         if not path: return
 
         try:
-            with open(path, mode='w', newline='', encoding='utf-8') as f:
+            # استفاده از utf-8-sig برای حل مشکل نمایش حروف فارسی در اکسل
+            with open(path, mode='w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
-                writer.writerow(["تارگت", "آی‌پی", "پورت", "پینگ", "اس‌ان‌آی استفاده شده", "تأمین‌کننده", "سرعت", "وضعیت"])
+                headers = [LANG[self.current_lang][k] for k in ["col_target", "col_ip", "col_port", "col_ping", "col_sni", "col_cdn", "col_speed", "col_status"]]
+                writer.writerow(headers)
                 writer.writerows(valid_items)
-            messagebox.showinfo("موفقیت", "فایل CSV با موفقیت ذخیره شد.")
+            messagebox.showinfo("Success", "CSV Saved.")
         except Exception as e:
-            messagebox.showerror("خطا", str(e))
+            messagebox.showerror("Error", str(e))
 
     def open_custom_export_dialog(self):
         top = tk.Toplevel(self.root)
-        top.title("خروجی سفارشی")
-        top.geometry("380x250")
+        top.title(LANG[self.current_lang]["btn_export_custom"])
+        top.geometry("400x260")
         top.transient(self.root)
         top.grab_set()
         
-        # اگر تم تاریک است دیالوگ هم تاریک شود
-        bg_col = "#212529" if self.is_dark else "#f8f9fa"
-        fg_col = "white" if self.is_dark else "black"
+        bg_col = "#000" if self.theme_state==2 else ("#212529" if self.theme_state==1 else "#f8f9fa")
+        fg_col = "#a0a0a0" if self.theme_state==2 else ("white" if self.theme_state==1 else "black")
         top.configure(bg=bg_col)
 
-        ttk.Label(top, text=":وضعیت اتصال را انتخاب کنید", background=bg_col, foreground=fg_col).pack(pady=(15, 5))
-        status_var = tk.StringVar(value="همه موارد موفق")
-        status_combo = ttk.Combobox(top, textvariable=status_var, state="readonly", justify="right")
-        status_combo['values'] = ("همه موارد موفق", "✔ اس‌ان‌آی متصل", "✔ پورت باز", "◐ فقط پینگ")
+        t = LANG[self.current_lang]
+        ttk.Label(top, text="Filter by Status:", background=bg_col, foreground=fg_col).pack(pady=(15, 5))
+        status_var = tk.StringVar(value="All Success")
+        status_combo = ttk.Combobox(top, textvariable=status_var, state="readonly", justify="center")
+        status_combo['values'] = ("All Success", t["st_sni_usable"], t["st_tcp_ok"], t["st_ping_only"])
         status_combo.pack(fill="x", padx=40)
 
-        ttk.Label(top, text=":تأمین‌کننده (CDN) را انتخاب کنید", background=bg_col, foreground=fg_col).pack(pady=(15, 5))
-        cdn_var = tk.StringVar(value="همه شبکه‌ها")
-        cdn_combo = ttk.Combobox(top, textvariable=cdn_var, state="readonly", justify="right")
-        cdn_combo['values'] = ("همه شبکه‌ها", "Cloudflare", "Vercel", "Fastly", "Akamai", "Google Cloud", "AWS", "نامشخص")
+        ttk.Label(top, text="Filter by CDN:", background=bg_col, foreground=fg_col).pack(pady=(15, 5))
+        cdn_var = tk.StringVar(value="All CDNs")
+        cdn_combo = ttk.Combobox(top, textvariable=cdn_var, state="readonly", justify="center")
+        cdn_combo['values'] = ("All CDNs", "Cloudflare", "Vercel", "Fastly", "Akamai", "Google Cloud", "AWS", "Unknown", "نامشخص")
         cdn_combo.pack(fill="x", padx=40)
 
         def perform_custom_export():
             st_filter = status_var.get()
             cdn_filter = cdn_var.get()
-            
             valid_items =[]
             for child in self.tree.get_children():
                 vals = self.tree.item(child, "values")
                 sni_used = self.tree.item(child, "text")
                 
-                # فیلتر وضعیت
-                if st_filter == "همه موارد موفق":
-                    if "✖" in vals[8] or "خطا" in vals[8]: continue
+                if st_filter == "All Success":
+                    if "✖" in vals[8] or "Error" in vals[8] or "خطا" in vals[8]: continue
                 else:
                     if st_filter not in vals[8]: continue
                 
-                # فیلتر CDN
-                if cdn_filter != "همه شبکه‌ها":
-                    if cdn_filter != vals[6]: continue
+                if cdn_filter != "All CDNs":
+                    if cdn_filter not in vals[6]: continue
 
                 valid_items.append([vals[1], vals[2], vals[3], vals[4], sni_used, vals[6], vals[7], vals[8]])
 
             if not valid_items:
-                messagebox.showwarning("خالی", "هیچ سروری با این فیلترها در لیست یافت نشد.", parent=top)
+                messagebox.showwarning("Warning", "No results match these filters.", parent=top)
                 return
             
             path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="Custom_Export.csv", parent=top)
             if not path: return
 
             try:
-                with open(path, mode='w', newline='', encoding='utf-8') as f:
+                with open(path, mode='w', newline='', encoding='utf-8-sig') as f:
                     writer = csv.writer(f)
-                    writer.writerow(["تارگت", "آی‌پی", "پورت", "پینگ", "اس‌ان‌آی استفاده شده", "تأمین‌کننده", "سرعت", "وضعیت"])
+                    headers = [t[k] for k in ["col_target", "col_ip", "col_port", "col_ping", "col_sni", "col_cdn", "col_speed", "col_status"]]
+                    writer.writerow(headers)
                     writer.writerows(valid_items)
-                messagebox.showinfo("موفقیت", "فایل با موفقیت صادر شد.", parent=top)
+                messagebox.showinfo("Success", "Custom CSV Exported.", parent=top)
                 top.destroy()
             except Exception as e:
-                messagebox.showerror("خطا", str(e), parent=top)
+                messagebox.showerror("Error", str(e), parent=top)
 
-        btn_save = ttk.Button(top, text="ذخیره خروجی سفارشی", style="Primary.TButton", command=perform_custom_export)
+        btn_save = ttk.Button(top, text="Export", style="Primary.TButton", command=perform_custom_export)
         btn_save.pack(pady=25)
 
 if __name__ == "__main__":
