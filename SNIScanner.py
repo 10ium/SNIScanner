@@ -16,19 +16,32 @@ import webbrowser
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-# ====== تنظیمات پایه و دیتابیس ======
-VERSION = "v1.3.0"
+# ====== تنظیمات پایه ======
+VERSION = "v1.4.0"
 GITHUB_API_URL = "https://api.github.com/repos/10ium/SNIScanner/releases/latest"
 SETTINGS_FILE = "radar_settings.json"
 
-CDN_PREFIXES = {
-    "Cloudflare":["104.16.", "104.17.", "104.18.", "104.19.", "104.20.", "104.21.", "172.64.", "172.65.", "172.66.", "172.67.", "172.68.", "172.69."],
-    "Vercel":["76.76.", "66.33.", "216.230.", "198.169."],
-    "Fastly":["151.101.", "199.232.", "146.75."],
-    "Akamai":["23.", "96.", "124.", "125.", "184.", "203.", "205.", "212."],
-    "Google Cloud":["34.", "35.", "104.15.", "130.211."],
-    "AWS":["18.", "52.", "54.", "3.", "13."]
-}
+# ====== دیتابیس دقیق شبکه‌ها بر اساس Subnet ======
+CDN_RANGES = [
+    ("Cloudflare", ["1.0.0.0/24","1.1.1.0/24","103.21.244.0/22","103.22.200.0/22","103.31.4.0/22","104.16.0.0/13","104.24.0.0/14","108.162.192.0/18","131.0.72.0/22","141.101.64.0/18","162.158.0.0/15","172.64.0.0/13","173.245.48.0/20","188.114.96.0/20","190.93.240.0/20","197.234.240.0/22","198.41.128.0/17"]),
+    ("Google Cloud", ["8.8.4.0/24","8.8.8.0/24","64.233.160.0/19","66.102.0.0/20","66.249.64.0/19","74.125.0.0/16","104.132.0.0/14","108.177.0.0/17","142.250.0.0/15","172.217.0.0/16","172.253.0.0/16","173.194.0.0/16","209.85.128.0/17","216.58.192.0/19","216.239.32.0/19"]),
+    ("Fastly", ["23.235.32.0/20","43.249.72.0/22","103.244.50.0/24","104.156.80.0/20","146.75.0.0/16","151.101.0.0/16","157.52.64.0/18","167.82.0.0/17","199.27.72.0/21","199.232.0.0/16"]),
+    ("Akamai", ["2.16.0.0/13","23.0.0.0/12","23.32.0.0/11","23.64.0.0/14","23.72.0.0/13","23.192.0.0/11","63.0.0.0/8","69.192.0.0/16","72.246.0.0/15","88.221.0.0/16","95.100.0.0/15","104.64.0.0/10","184.24.0.0/13","184.50.0.0/15","184.84.0.0/14"]),
+    ("Netlify", ["3.33.128.0/17","13.32.0.0/15","13.35.0.0/16","18.64.0.0/14","44.226.105.0/24","50.7.4.0/24","50.7.85.0/24","50.7.87.0/24","44.235.184.0/24","52.84.0.0/15","35.157.26.0/24","63.176.8.0/24","54.182.0.0/16","99.83.128.0/17","162.159.128.0/20"]),
+    ("Vercel", ["64.29.17.0/24","64.29.18.0/24","64.29.19.0/24","66.33.60.0/24","66.33.61.0/24","76.76.21.0/24","76.223.126.0/24"]),
+    ("CloudFront", ["52.46.0.0/18","52.84.0.0/15","54.182.0.0/16","99.84.0.0/16","130.176.0.0/17"]),
+    ("BunnyCDN", ["89.187.160.0/19","147.75.0.0/16"]),
+    ("Gcore", ["92.223.0.0/16","95.85.0.0/16","185.158.0.0/16"]),
+    ("ArvanCloud", ["185.220.226.0/24","185.143.232.0/22"]),
+]
+
+COMPILED_SUBNETS = []
+for cdn_name, subnets in CDN_RANGES:
+    for sub in subnets:
+        try:
+            COMPILED_SUBNETS.append((ipaddress.ip_network(sub, strict=False), cdn_name))
+        except ValueError:
+            pass
 
 FALLBACK_DNS = {
     "cloudflare.com":["104.16.132.229", "104.16.133.229"],
@@ -39,7 +52,7 @@ FALLBACK_DNS = {
 }
 
 DEFAULT_PORTS = "80, 8080, 8880, 2052, 2082, 2086, 2095, 443, 2053, 2083, 2087, 2096, 8443"
-DEFAULT_SPEED_URL = "/" # فایل پیش‌فرض برای تست سرعت (روت سرور)
+DEFAULT_SPEED_URL = "/"
 
 # ====== سیستم زبان (i18n) ======
 LANG = {
@@ -70,11 +83,11 @@ LANG = {
         "lbl_sort": "برای مرتب‌سازی روی عنوان ستون‌ها کلیک کنید",
         "col_select": "تیک", "col_target": "تارگت", "col_ip": "آی‌پی", "col_port": "پورت", "col_ping": "پینگ", "col_sni": "هندشیک", "col_cdn": "تأمین‌کننده", "col_speed": "سرعت", "col_status": "نتیجه نهایی",
         "ready": "رادار آماده اسکن شبکه است...",
-        "msg_error": "خطا", "msg_success": "موفقیت", "msg_no_target": "تارگت معتبری وارد نشده است.",
+        "msg_error": "خطا", "msg_success": "موفقیت", "msg_no_target": "تارگت معتبری در ورودی یافت نشد.",
         "msg_copied": "در کلیپ‌بورد کپی شد.", "msg_empty_clipboard": "کلیپ‌بورد خالی است.",
         "st_sni_usable": "✔ اس‌ان‌آی متصل", "st_tcp_ok": "✔ پورت باز", "st_ping_only": "◐ فقط پینگ", "st_down": "✖ مسدود", "st_timeout": "تایم‌اوت", "st_filtered": "✖ فیلتر شده",
         "st_valid": "معتبر", "st_invalid": "ناموفق",
-        "targets_count": "تارگت‌های یکتا:",
+        "targets_count": "تارگت‌های یافت‌شده:",
         "time_elapsed": "سپری شده:", "time_eta": "باقی‌مانده:"
     },
     "en": {
@@ -104,11 +117,11 @@ LANG = {
         "lbl_sort": "Click on column headers to sort results",
         "col_select": "Sel", "col_target": "Target", "col_ip": "IP Address", "col_port": "Port", "col_ping": "Ping", "col_sni": "Handshake", "col_cdn": "Provider", "col_speed": "Speed", "col_status": "Final Verdict",
         "ready": "Radar is ready to scan the network...",
-        "msg_error": "Error", "msg_success": "Success", "msg_no_target": "No valid targets entered.",
+        "msg_error": "Error", "msg_success": "Success", "msg_no_target": "No valid targets found in input.",
         "msg_copied": "Copied to clipboard.", "msg_empty_clipboard": "Clipboard is empty.",
         "st_sni_usable": "✔ SNI Usable", "st_tcp_ok": "✔ Port Open", "st_ping_only": "◐ Ping Only", "st_down": "✖ Blocked", "st_timeout": "Timeout", "st_filtered": "✖ Filtered",
         "st_valid": "Valid", "st_invalid": "Failed",
-        "targets_count": "Unique Targets:",
+        "targets_count": "Parsed Targets:",
         "time_elapsed": "Elapsed:", "time_eta": "ETA:"
     }
 }
@@ -132,7 +145,6 @@ class SNIScannerApp:
         self.result_queue = queue.Queue()
         self.stop_event = threading.Event()
         
-        # Stats & Time tracking
         self.stat_total_scans = 0
         self.stat_checked = 0
         self.stat_success = 0
@@ -221,7 +233,6 @@ class SNIScannerApp:
         self.lbl_set_ports = ttk.Label(self.settings_frame)
         self.lbl_set_ports.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
 
-        # فیلد جدید: تست سرعت شخصی‌سازی شده
         row_idx += 1
         self.speed_url_var = tk.StringVar(value=DEFAULT_SPEED_URL)
         ttk.Entry(self.settings_frame, textvariable=self.speed_url_var, justify="left").grid(row=row_idx, column=0, sticky="ew", padx=5, pady=5)
@@ -308,7 +319,7 @@ class SNIScannerApp:
         self.lbl_stat_ping_val, self.lbl_stat_ping_title = self.create_metric_card(self.dash_frame, "#cff4fc", "#055160")
         self.lbl_stat_down_val, self.lbl_stat_down_title = self.create_metric_card(self.dash_frame, "#f8d7da", "#842029")
 
-        # 2. نوار پیشرفت و زمان‌سنج (Progress Dashboard)
+        # 2. نوار پیشرفت و زمان‌سنج
         progress_frame = ttk.Frame(self.left_panel)
         progress_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         progress_frame.columnconfigure(1, weight=1)
@@ -338,7 +349,6 @@ class SNIScannerApp:
         self.lbl_targets_count = ttk.Label(tools_frame, font=self.font_bold, foreground="#198754")
         self.lbl_targets_count.pack(side="left", padx=15)
 
-        # دکمه‌های اسکرول سریع
         btn_scroll_down = ttk.Button(tools_frame, text="⬇️", width=3, command=lambda: self.tree.yview_moveto(1))
         btn_scroll_down.pack(side="right", padx=2)
         btn_scroll_up = ttk.Button(tools_frame, text="⬆️", width=3, command=lambda: self.tree.yview_moveto(0))
@@ -500,7 +510,6 @@ class SNIScannerApp:
     def update_timer(self):
         if self.is_scanning:
             elapsed = time.time() - self.start_time
-            
             eta = 0
             if self.stat_checked > 0:
                 speed = self.stat_checked / elapsed
@@ -536,7 +545,7 @@ class SNIScannerApp:
                 else:
                     msg = "شما از آخرین نسخه استفاده می‌کنید." if self.current_lang=="fa" else "You are using the latest version."
                     messagebox.showinfo("Up to date", msg)
-        except Exception as e:
+        except Exception:
             msg = "هیچ نسخه‌ای روی مخزن گیت‌هاب یافت نشد." if self.current_lang=="fa" else "No releases found on GitHub repository."
             messagebox.showinfo("Info", msg)
 
@@ -674,10 +683,13 @@ class SNIScannerApp:
             return False
 
     def detect_cdn(self, ip_str):
-        for cdn_name, prefixes in CDN_PREFIXES.items():
-            for prefix in prefixes:
-                if ip_str.startswith(prefix):
-                    return cdn_name
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+            for net, name in COMPILED_SUBNETS:
+                if ip_obj in net:
+                    return name
+        except ValueError:
+            pass
         return "Unknown" if self.current_lang=="en" else "نامشخص"
 
     def icmp_ping(self, ip, timeout):
@@ -735,15 +747,52 @@ class SNIScannerApp:
         except Exception:
             return 0.0
 
-    def clean_target(self, target):
-        t = target.strip()
-        t = re.sub(r'^[۰-۹0-9]+\.\s*', '', t) 
-        if self.remove_http_var.get():
-            t = re.sub(r'^https?://', '', t, flags=re.IGNORECASE)
-        if self.remove_www_var.get():
-            t = re.sub(r'^www\.', '', t, flags=re.IGNORECASE)
-        t = t.split('/')[0] if '/' in t and not ('/' in t and any(c.isdigit() for c in t.split('/')[-1])) else t
-        return t.strip()
+    def parse_targets_smart(self, text):
+        targets = set()
+        max_limit = 50000
+        cidr_re = re.compile(r'\b((?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)/\d{1,2})\b')
+        ip_re = re.compile(r'\b((?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))\b')
+        dom_re = re.compile(r'\b((?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,})\b')
+        
+        for line in text.split('\n'):
+            if len(targets) >= max_limit: break
+            l = line.strip()
+            if not l or l.startswith("#"): continue
+            
+            if self.remove_http_var.get():
+                l = re.sub(r'^https?://', '', l, flags=re.IGNORECASE)
+            if self.remove_www_var.get():
+                l = re.sub(r'^www\.', '', l, flags=re.IGNORECASE)
+
+            cidr_found = False
+            for match in cidr_re.finditer(l):
+                cidr_found = True
+                try:
+                    net = ipaddress.IPv4Network(match.group(1), strict=False)
+                    hosts = list(net.hosts()) or list(net)
+                    for h in hosts[:self.cidr_limit_var.get()]:
+                        targets.add(str(h))
+                        if len(targets) >= max_limit: break
+                except ValueError:
+                    pass
+            
+            remaining = cidr_re.sub("", l) if cidr_found else l
+            
+            for match in ip_re.finditer(remaining):
+                ip = match.group(1)
+                try:
+                    ipaddress.ip_address(ip)
+                    targets.add(ip)
+                except ValueError:
+                    pass
+            
+            remaining2 = ip_re.sub("", cidr_re.sub("", l))
+            for match in dom_re.finditer(remaining2):
+                dom = match.group(1).lower()
+                if len(dom) > 3 and "." in dom:
+                    targets.add(dom)
+                    
+        return sorted(list(targets))
 
     def scan_worker(self, task):
         if self.stop_event.is_set(): return
@@ -827,50 +876,31 @@ class SNIScannerApp:
             })
 
     def start_scan(self):
-        raw_lines = self.text_input.get("1.0", tk.END).strip().split('\n')
+        raw_text = self.text_input.get("1.0", tk.END)
         default_sni = self.default_sni_var.get().strip()
-        max_cidr = self.cidr_limit_var.get()
         
         raw_ports = self.ports_input.get("1.0", tk.END).replace('\n', ',').split(',')
         ports =[int(p.strip()) for p in raw_ports if p.strip().isdigit() and 0 < int(p.strip()) <= 65535]
         if not ports: ports = [443]
 
-        unique_targets_set = set()
-        tasks =[]
-        
-        for line in raw_lines:
-            cleaned_line = self.clean_target(line)
-            if not cleaned_line: continue
-            
-            unique_targets_set.add(cleaned_line)
+        parsed_targets = self.parse_targets_smart(raw_text)
 
-            try:
-                if '/' in cleaned_line:
-                    net = ipaddress.ip_network(cleaned_line, strict=False)
-                    hosts = list(net.hosts())[:max_cidr]
-                    for h in hosts:
-                        for p in ports: tasks.append((cleaned_line, str(h), default_sni, p))
-                    continue
-            except ValueError:
-                pass
-
-            try:
-                ipaddress.ip_address(cleaned_line)
-                for p in ports: tasks.append((cleaned_line, cleaned_line, default_sni, p))
-                continue
-            except ValueError:
-                pass
-
-            for p in ports: tasks.append((cleaned_line, cleaned_line, cleaned_line, p))
-
-        if not tasks:
+        if not parsed_targets:
             messagebox.showwarning(LANG[self.current_lang]["msg_error"], LANG[self.current_lang]["msg_no_target"])
             return
+
+        tasks =[]
+        for target in parsed_targets:
+            try:
+                ipaddress.ip_address(target)
+                for p in ports: tasks.append((target, target, default_sni, p))
+            except ValueError:
+                for p in ports: tasks.append((target, target, target, p))
 
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        self.stat_unique_targets = len(unique_targets_set)
+        self.stat_unique_targets = len(parsed_targets)
         self.stat_total_scans = len(tasks)
         self.stat_checked = 0
         self.stat_success = 0
@@ -1018,7 +1048,7 @@ class SNIScannerApp:
     def open_custom_export_dialog(self):
         top = tk.Toplevel(self.root)
         top.title(LANG[self.current_lang]["btn_export_custom"])
-        top.geometry("400x260")
+        top.geometry("400x320")
         top.transient(self.root)
         top.grab_set()
         
@@ -1027,22 +1057,31 @@ class SNIScannerApp:
         top.configure(bg=bg_col)
 
         t = LANG[self.current_lang]
-        ttk.Label(top, text="Filter by Status:", background=bg_col, foreground=fg_col).pack(pady=(15, 5))
+        
+        ttk.Label(top, text="Format:", background=bg_col, foreground=fg_col).pack(pady=(10, 2))
+        fmt_var = tk.StringVar(value="TXT (Beautiful Grouped)")
+        fmt_combo = ttk.Combobox(top, textvariable=fmt_var, state="readonly", justify="center")
+        fmt_combo['values'] = ("TXT (Beautiful Grouped)", "CSV (Excel)")
+        fmt_combo.pack(fill="x", padx=40)
+
+        ttk.Label(top, text="Filter by Status:", background=bg_col, foreground=fg_col).pack(pady=(15, 2))
         status_var = tk.StringVar(value="All Success")
         status_combo = ttk.Combobox(top, textvariable=status_var, state="readonly", justify="center")
         status_combo['values'] = ("All Success", t["st_sni_usable"], t["st_tcp_ok"], t["st_ping_only"])
         status_combo.pack(fill="x", padx=40)
 
-        ttk.Label(top, text="Filter by CDN:", background=bg_col, foreground=fg_col).pack(pady=(15, 5))
+        ttk.Label(top, text="Filter by CDN:", background=bg_col, foreground=fg_col).pack(pady=(15, 2))
         cdn_var = tk.StringVar(value="All CDNs")
         cdn_combo = ttk.Combobox(top, textvariable=cdn_var, state="readonly", justify="center")
-        cdn_combo['values'] = ("All CDNs", "Cloudflare", "Vercel", "Fastly", "Akamai", "Google Cloud", "AWS", "Unknown", "نامشخص")
+        cdn_combo['values'] = ("All CDNs", "Cloudflare", "Vercel", "Fastly", "Akamai", "Google Cloud", "AWS", "ArvanCloud", "Unknown", "نامشخص")
         cdn_combo.pack(fill="x", padx=40)
 
         def perform_custom_export():
             st_filter = status_var.get()
             cdn_filter = cdn_var.get()
-            valid_items =[]
+            export_fmt = fmt_var.get()
+            
+            valid_items = []
             for child in self.tree.get_children():
                 vals = self.tree.item(child, "values")
                 sni_used = self.tree.item(child, "text")
@@ -1055,28 +1094,67 @@ class SNIScannerApp:
                 if cdn_filter != "All CDNs":
                     if cdn_filter not in vals[6]: continue
 
-                valid_items.append([vals[1], vals[2], vals[3], vals[4], sni_used, vals[6], vals[7], vals[8]])
+                valid_items.append({
+                    "target": vals[1], "ip": vals[2], "port": vals[3], "ping": vals[4],
+                    "sni_used": sni_used, "cdn": vals[6], "speed": vals[7], "status": vals[8]
+                })
 
             if not valid_items:
                 messagebox.showwarning("Warning", "No results match these filters.", parent=top)
                 return
             
-            path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="Custom_Export.csv", parent=top)
-            if not path: return
+            if "CSV" in export_fmt:
+                path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="Custom_Export.csv", parent=top)
+                if not path: return
+                try:
+                    with open(path, mode='w', newline='', encoding='utf-8-sig') as f:
+                        writer = csv.writer(f)
+                        headers = [t[k] for k in ["col_target", "col_ip", "col_port", "col_ping", "col_sni", "col_cdn", "col_speed", "col_status"]]
+                        writer.writerow(headers)
+                        for r in valid_items:
+                            writer.writerow([r["target"], r["ip"], r["port"], r["ping"], r["sni_used"], r["cdn"], r["speed"], r["status"]])
+                    messagebox.showinfo("Success", "CSV Exported.", parent=top)
+                    top.destroy()
+                except Exception as e:
+                    messagebox.showerror("Error", str(e), parent=top)
+            else:
+                path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text File", "*.txt")], initialfile="Beautiful_Export.txt", parent=top)
+                if not path: return
+                try:
+                    with open(path, mode='w', encoding='utf-8') as f:
+                        f.write(f"# Advanced SNI Radar {VERSION} - Custom Export\n")
+                        f.write(f"# Filter Status: {st_filter} | Filter CDN: {cdn_filter}\n")
+                        f.write(f"# Total Results: {len(valid_items)}\n\n")
+                        
+                        both = [r for r in valid_items if t["st_sni_usable"] in r["status"]]
+                        tcp_only = [r for r in valid_items if t["st_tcp_ok"] in r["status"]]
+                        ping_only = [r for r in valid_items if t["st_ping_only"] in r["status"]]
+                        
+                        if both:
+                            f.write("=== 🚀 SNI & TCP CONNECTED ===\n")
+                            for r in sorted(both, key=lambda x: float(x["ping"].split()[0]) if "ms" in x["ping"] else 9999):
+                                f.write(f"{r['target']}  ->  {r['ip']}:{r['port']}  [Ping: {r['ping']} | Speed: {r['speed']} | CDN: {r['cdn']}]\n")
+                            f.write("\n")
+                            
+                        if tcp_only:
+                            f.write("=== 🔓 TCP OPEN (No TLS) ===\n")
+                            for r in sorted(tcp_only, key=lambda x: float(x["ping"].split()[0]) if "ms" in x["ping"] else 9999):
+                                f.write(f"{r['target']}  ->  {r['ip']}:{r['port']}  [Ping: {r['ping']} | CDN: {r['cdn']}]\n")
+                            f.write("\n")
+                            
+                        if ping_only:
+                            f.write("=== 📡 PING ONLY (TCP Closed) ===\n")
+                            for r in sorted(ping_only, key=lambda x: float(x["ping"].split()[0]) if "ms" in x["ping"] else 9999):
+                                f.write(f"{r['target']}  ->  {r['ip']}  [Ping: {r['ping']} | CDN: {r['cdn']}]\n")
+                            f.write("\n")
+                            
+                    messagebox.showinfo("Success", "Beautiful TXT Exported.", parent=top)
+                    top.destroy()
+                except Exception as e:
+                    messagebox.showerror("Error", str(e), parent=top)
 
-            try:
-                with open(path, mode='w', newline='', encoding='utf-8-sig') as f:
-                    writer = csv.writer(f)
-                    headers = [t[k] for k in ["col_target", "col_ip", "col_port", "col_ping", "col_sni", "col_cdn", "col_speed", "col_status"]]
-                    writer.writerow(headers)
-                    writer.writerows(valid_items)
-                messagebox.showinfo("Success", "Custom CSV Exported.", parent=top)
-                top.destroy()
-            except Exception as e:
-                messagebox.showerror("Error", str(e), parent=top)
-
-        btn_save = ttk.Button(top, text="Export", style="Primary.TButton", command=perform_custom_export)
-        btn_save.pack(pady=25)
+        btn_save = ttk.Button(top, text="Export File", style="Primary.TButton", command=perform_custom_export)
+        btn_save.pack(pady=20)
 
 if __name__ == "__main__":
     root = tk.Tk()
