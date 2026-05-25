@@ -19,7 +19,7 @@ import statistics
 import random
 
 # ====== تنظیمات پایه ======
-VERSION = "v1.13.1"
+VERSION = "v1.14.0"
 GITHUB_API_URL = "https://api.github.com/repos/10ium/SNIScanner/releases/latest"
 SETTINGS_FILE = "radar_settings.json"
 
@@ -84,6 +84,7 @@ CDN_TRANSLATIONS = {
     "ArvanCloud": "ابرآروان", "DerakCloud": "درک‌کلود", "IranServer": "ایران‌سرور", "ParsPack": "پارس‌پک"
 }
 
+# ====== پریست‌های آماده (Presets) ======
 PRESETS_CDN = {
     "تمامی رنج‌های کلودفلر (Cloudflare)": "\n".join(CDN_RANGES[0][1]),
     "رنج‌های تخصصی آکامای (Akamai Subnets)": "\n".join(CDN_RANGES[3][1]),
@@ -95,10 +96,10 @@ PRESETS_CDN = {
 
 PRESETS_SNI = {
     "لیست کامل hCaptcha (کلودفلر)": "three-cust.hcaptcha.com\nstats.hcaptcha.com\nwww.hcaptcha.com\nu.hcaptcha.com\ntg.hcaptcha.com\nprimary.hcaptcha.com\npat-internal.hcaptcha.com\njobs.hcaptcha.com\nhmt-lucid-neumann.hcaptcha.com\ndashboard.hcaptcha.com\ncached-queries.hcaptcha.com\nbilling.hcaptcha.com\nassets.hcaptcha.com\napi.hcaptcha.com\nanalytics-beta.hcaptcha.com\naccounts.hcaptcha.com\na.hcaptcha.com\n47dilm9.mqwaa.dns.army\nrel-l.top\nwww-canary.hcaptcha.com\ntractionrec.hcaptcha.com\ntp.hcaptcha.com\nthree-cust-imgs.hcaptcha.com\ntemple-gates.hcaptcha.com\nstyler.hcaptcha.com\npast-issuer.hcaptcha.com\nhealth-check.hcaptcha.com\nexchange.hcaptcha.com\nemail.hcaptcha.com\nlabeling-masters.hcaptcha.com\npre.hcaptcha.com\nfantasia-assets.hcaptcha.com\nproxy.hcaptcha.com\nloader.hcaptcha.com\ni2.hcaptcha.com\nhmt-pensive-torvalds.hcaptcha.com\nchunker.hcaptcha.com\nanalytics.hcaptcha.com\nhcaptcha.com\nnewassets.hcaptcha.com\ncharlie.hcaptcha.com\njs.hcaptcha.com\nimgs3.hcaptcha.com\nchallenge-tasks.hcaptcha.com\nserverless.hcaptcha.com\nimgs2.hcaptcha.com\nimgs.hcaptcha.com\nfactored-cognition.hcaptcha.com\nhiding.men\ncf-3.payun.men\nmiti.hcaptcha.com\nrisk-prod-srv.hcaptcha.com\npst-sample.hcaptcha.com\nsentry.hcaptcha.com\nhmt-eloquent-mclaren.hcaptcha.com\nhmt-elegant-rosalind.hcaptcha.com\ndemo.hcaptcha.com\nfonts.hcaptcha.com\nauth.vercel.com\nstatic.cloudflareinsights.com",
-    "لیست کامل آکامای (Akamai)": "a248.e.akamai.net\na77.net.akamai.net\na104.net.akamai.net\na184.net.akamai.net\nds-aksb.akamaized.net\nak.net.akamaized.net",
-    "لیست کامل گوگل (Google)": "fonts.googleapis.com\najax.googleapis.com\nstorage.googleapis.com\nwww.gstatic.com\nssl.gstatic.com\naccounts.google.com",
-    "لیست کامل آمازون (CloudFront)": "d1.cloudfront.net\nd2.cloudfront.net\nd3.cloudfront.net\naws.cloudfront.net\ns3.amazonaws.com\nedge.cloudfront.net",
-    "لیست کامل آژور (Azure)": "ajax.aspnetcdn.com\naz416426.vo.msecnd.net\naz784690.vo.msecnd.net\ncdn.office.net\nstatic.azureedge.net\naz.msecnd.net",
+    "دامنه آکامای (Akamai)": "a248.e.akamai.net",
+    "دامنه گوگل (Google)": "www.googleapis.com\nfonts.googleapis.com",
+    "سایت‌های معروف ورسل": "react.dev\nvercel.com\nnextjs.org",
+    "اس‌ان‌آی‌های تمیز رایج": "speedtest.net\nspotify.com\ntwitch.tv\nauth.openai.com",
 }
 
 # ====== سیستم زبان (i18n) ======
@@ -177,6 +178,7 @@ LANG = {
         "smart_ip": "Filter Private/Invalid IPs",
         "strict_ping": "Strict Mode (Require successful Ping)",
         "auto_scroll": "Auto-scroll table during scan",
+        "auto_scroll_mode": "Auto-scroll table during scan",
         "auto_save": "Auto-create config.json on finish",
         "port_scan_mode": "Enable Port Scanner Mode",
         "btn_save": "💾 Save Settings", "btn_stop": "Stop", "btn_start": "🚀 Start Radar",
@@ -881,6 +883,24 @@ class SNIScannerApp:
         widget.delete("1.0", tk.END)
         widget.insert("1.0", text)
 
+    def toggle_check(self, event):
+        region = self.tree.identify_region(event.x, event.y)
+        if region == "cell":
+            column = self.tree.identify_column(event.x)
+            if column == '#1': 
+                clicked_item = self.tree.identify_row(event.y)
+                if not clicked_item: return
+                self._check_item(clicked_item)
+
+    def _check_item(self, item_id):
+        for child in self.tree.get_children():
+            vals = list(self.tree.item(child, "values"))
+            if child == item_id:
+                vals[0] = "☑" if vals[0] == "☐" else "☐"
+            else:
+                vals[0] = "☐"
+            self.tree.item(child, values=vals)
+
     def treeview_sort_column(self, col, reverse):
         l =[(self.tree.set(k, col), k) for k in self.tree.get_children('')]
         if col in ("icmp", "tcp_ping", "speed", "port", "score"):
@@ -944,30 +964,36 @@ class SNIScannerApp:
             pass
         return False, None
 
+    # سیستم امتیازدهی فوق‌دقیق و شناور غیر پله‌ای (Non-stepped continuous scoring)
     def calculate_score(self, ping, tcp, tls_ok, tcp_ok, speed, jitter, throttled, stability):
-        score = 0
-        if tls_ok: score += 40
-        elif tcp_ok: score += 20
+        score = 0.0
         
-        if tcp_ok and ping:
-            if ping < 100: score += 20
-            elif ping < 200: score += 10
-            elif ping < 350: score += 5
+        # ۱. وضعیت پروتکل‌ها (حداکثر ۴۰ امتیاز)
+        if tls_ok: score += 40.0
+        elif tcp_ok: score += 20.0
+        
+        # ۲. پینگ ICMP به صورت پیوسته (حداکثر ۲۵ امتیاز)
+        if icmp_ok and ping:
+            # فرمول پیوسته: پینگ زیر ۵۰ میلی‌ثانیه ۲۵ امتیاز کامل، بالای ۵۰۰ میلی‌ثانیه صفر امتیاز، بین این دو به صورت خطی
+            score += max(0.0, min(25.0, 25.0 * (1.0 - (ping - 50.0) / 450.0)))
             
+        # ۳. جیتر پینگ به صورت پیوسته (حداکثر ۱۵ امتیاز)
         if jitter is not None:
-            if jitter < 10: score += 10
-            elif jitter < 30: score += 5
+            # فرمول پیوسته: جیتر زیر ۵ میلی‌ثانیه ۱۵ امتیاز کامل، بالای ۱۰۰ میلی‌ثانیه صفر امتیاز
+            score += max(0.0, min(15.0, 15.0 * (1.0 - (jitter - 5.0) / 95.0)))
             
+        # ۴. سرعت دانلود به صورت پیوسته (حداکثر ۱۰ امتیاز)
         if speed > 0:
-            if speed > 500: score += 20
-            elif speed > 100: score += 10
-            elif speed > 20: score += 5
+            # فرمول پیوسته: سرعت بالای ۱۰۰۰ کیلوبایت بر ثانیه ۱۰ امتیاز کامل، زیر ۱۰ کیلوبایت صفر امتیاز
+            score += max(0.0, min(10.0, 10.0 * (speed / 1000.0)))
             
-        score += (stability / 100) * 10
+        # ۵. فاکتور پایداری درصد موفقیت تست‌ها (حداکثر ۱۰ امتیاز)
+        score += (stability / 100.0) * 10.0
             
-        if throttled: score -= 30
+        # جریمه سنگین برای سرورهای گلوگاه‌شده / Throttled
+        if throttled: score -= 30.0
             
-        return min(100, max(0, int(score)))
+        return min(100, max(0, int(round(score))))
 
     def parse_ports_input(self, raw_text):
         ports = []
