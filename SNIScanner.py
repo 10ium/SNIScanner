@@ -19,7 +19,7 @@ import statistics
 import random
 
 # ====== تنظیمات پایه ======
-VERSION = "v1.13.0"
+VERSION = "v1.13.1"
 GITHUB_API_URL = "https://api.github.com/repos/10ium/SNIScanner/releases/latest"
 SETTINGS_FILE = "radar_settings.json"
 
@@ -84,15 +84,13 @@ CDN_TRANSLATIONS = {
     "ArvanCloud": "ابرآروان", "DerakCloud": "درک‌کلود", "IranServer": "ایران‌سرور", "ParsPack": "پارس‌پک"
 }
 
-# ====== پریست‌های آماده (Presets) ======
 PRESETS_CDN = {
-    "رنج‌های منتخب کلودفلر (Cloudflare)": "104.16.0.0/13\n104.24.0.0/14\n172.64.0.0/13\n103.21.244.0/22",
-    "رنج‌های منتخب آکامای (Akamai)": "2.16.0.0/24\n2.17.0.0/24\n2.18.0.0/24\n2.19.0.0/24\n2.20.0.0/24\n2.21.0.0/24\n2.22.0.0/24\n23.32.0.0/24\n23.48.0.0/24\n23.58.0.0/24\n23.72.0.0/24\n23.192.0.0/24\n23.193.0.0/24\n23.202.0.0/24\n23.43.0.0/24\n104.64.0.0/24\n104.65.0.0/24\n104.103.0.0/24\n104.112.0.0/24\n184.24.0.0/24\n184.84.0.0/24\n184.86.0.0/24\n185.200.232.0/24\n72.246.0.0/24\n92.16.0.0/24\n92.122.0.0/24",
-    "رنج‌های منتخب گوگل (Google Cloud)": "34.143.0.0/24\n34.160.0.0/24\n34.96.0.0/24\n35.186.0.0/24\n64.233.160.0/24\n66.249.80.0/24\n74.125.0.0/24\n142.250.0.0/24\n172.217.0.0/24\n216.58.192.0/24\n35.201.0.0/24\n34.117.0.0/24",
-    "رنج‌های منتخب آمازون (CloudFront)": "13.32.0.0/24\n13.35.0.0/24\n52.46.0.0/24\n54.192.0.0/24\n54.230.0.0/24\n99.84.0.0/24\n130.176.0.0/24\n143.204.0.0/24\n205.251.192.0/24\n54.239.128.0/24",
-    "رنج‌های منتخب آژور (Azure)": "13.107.4.0/24\n23.96.0.0/24\n40.64.0.0/24\n52.224.0.0/24\n104.208.0.0/24\n137.116.0.0/24\n168.61.0.0/24",
-    "رنج‌های ابرآروان (Arvan)": "\n".join(CDN_RANGES[9][1]),
-    "رنج‌های درک‌کلود (Derak)": "\n".join(CDN_RANGES[10][1]),
+    "تمامی رنج‌های کلودفلر (Cloudflare)": "\n".join(CDN_RANGES[0][1]),
+    "رنج‌های تخصصی آکامای (Akamai Subnets)": "\n".join(CDN_RANGES[3][1]),
+    "تمامی رنج‌های ابرآروان (Arvan)": "\n".join(CDN_RANGES[9][1]),
+    "تمامی رنج‌های درک‌کلود (Derak)": "\n".join(CDN_RANGES[10][1]),
+    "سایت‌های کلودفرانت (CloudFront)": "d1.awsstatic.com\naws.amazon.com\nd36cz9buwru1tt.cloudfront.net",
+    "سایت‌های آژور (Azure)": "ajax.aspnetcdn.com\naz416426.vo.msecnd.net\naz784690.vo.msecnd.net",
 }
 
 PRESETS_SNI = {
@@ -349,6 +347,23 @@ class SNIScannerApp:
         detail = f"IP: {vals[2]}:{vals[3]} | SNI: {sni} | CDN: {vals[7]} | Ping: {vals[4]} | Speed: {vals[8]} | Status: {vals[10]}"
         self.root.clipboard_clear()
         self.root.clipboard_append(detail)
+
+    def paste_from_clipboard(self):
+        try:
+            clipboard_text = self.root.clipboard_get()
+            if clipboard_text:
+                self.text_input.insert(tk.END, clipboard_text + "\n")
+        except tk.TclError:
+            messagebox.showwarning(LANG[self.current_lang]["msg_warning"], LANG[self.current_lang]["msg_empty_clipboard"])
+
+    def load_from_file(self):
+        file_path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
+        if file_path:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    self.text_input.insert(tk.END, f.read() + "\n")
+            except Exception as e:
+                messagebox.showerror(LANG[self.current_lang]["msg_error"], str(e))
 
     def setup_ui(self):
         self.root.columnconfigure(0, weight=1)
