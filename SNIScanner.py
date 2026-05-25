@@ -19,7 +19,7 @@ import statistics
 import random
 
 # ====== تنظیمات پایه ======
-VERSION = "v1.14.0"
+VERSION = "v1.15.0"
 GITHUB_API_URL = "https://api.github.com/repos/10ium/SNIScanner/releases/latest"
 SETTINGS_FILE = "radar_settings.json"
 
@@ -178,7 +178,6 @@ LANG = {
         "smart_ip": "Filter Private/Invalid IPs",
         "strict_ping": "Strict Mode (Require successful Ping)",
         "auto_scroll": "Auto-scroll table during scan",
-        "auto_scroll_mode": "Auto-scroll table during scan",
         "auto_save": "Auto-create config.json on finish",
         "port_scan_mode": "Enable Port Scanner Mode",
         "btn_save": "💾 Save Settings", "btn_stop": "Stop", "btn_start": "🚀 Start Radar",
@@ -240,9 +239,9 @@ class SNIScannerApp:
         self.setup_ui()
         self.load_settings()
         self.apply_theme()
-        self.apply_language()
-        self.bind_hotkeys()
-        self.setup_context_menu()
+        self.setup_context_menu() # ساخته شدن منوی راست‌کلیک
+        self.bind_hotkeys()       # ساخته شدن هات‌کی‌ها
+        self.apply_language()     # مقداردهی زبان (نیازمند وجود tree_menu)
         
         threading.Thread(target=self.fetch_isp_info, daemon=True).start()
         
@@ -973,7 +972,7 @@ class SNIScannerApp:
         elif tcp_ok: score += 20.0
         
         # ۲. پینگ ICMP به صورت پیوسته (حداکثر ۲۵ امتیاز)
-        if icmp_ok and ping:
+        if ping is not None:
             # فرمول پیوسته: پینگ زیر ۵۰ میلی‌ثانیه ۲۵ امتیاز کامل، بالای ۵۰۰ میلی‌ثانیه صفر امتیاز، بین این دو به صورت خطی
             score += max(0.0, min(25.0, 25.0 * (1.0 - (ping - 50.0) / 450.0)))
             
