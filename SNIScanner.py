@@ -18,11 +18,12 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import statistics
 import random
+import math
 
 # ==============================================================================
-# ۱. تنظیمات، متغیرهای پایه و دیتابیس CDNها (IPv4 و IPv6)
+# ۱. تنظیمات، متغیرهای پایه و دیتابیس شبکه‌ها و کدهای HTTP
 # ==============================================================================
-VERSION = "v2.2.0-PRO"
+VERSION = "v2.3.0-PRO"
 GITHUB_API_URL = "https://api.github.com/repos/10ium/SNIScanner/releases/latest"
 SETTINGS_FILE = "radar_settings.json"
 
@@ -121,7 +122,15 @@ FALLBACK_DNS = {
 }
 
 DEFAULT_PORTS = "80, 8080, 8880, 2052, 2082, 2086, 2095, 443, 2053, 2083, 2087, 2096, 8443"
-DEFAULT_SPEED_URL = "/"
+
+SPEED_TEST_PRESETS = [
+    ("/cdn-cgi/trace", "سبک و سریع (Cloudflare Trace)"),
+    ("/", "پیش‌فرض ریشه دامنه (Root Path)"),
+    ("/10MB.bin", "تست استاندارد (10MB Test File)"),
+    ("/50MB.bin", "تست سنگین پهنای باند (50MB High-Speed)"),
+    ("/speedtest/random1000x1000.jpg", "تصویر بافری (Speedtest Asset)"),
+    ("/favicon.ico", "فایل آیکون کم‌حجم (Favicon)")
+]
 
 CDN_TRANSLATIONS = {
     "Cloudflare": "کلودفلر", "Google Cloud": "گوگل کلود", "Fastly": "فستلی",
@@ -138,6 +147,49 @@ PRESETS_SNI = {
     "اس‌ان‌آی‌های تمیز بین‌المللی": "speedtest.net\nspotify.com\ntwitch.tv\nauth.openai.com",
 }
 
+# ==============================================================================
+# ۲. ماژول فرمت و ترجمه کدهای وضعیت HTTP (Status Formatter)
+# ==============================================================================
+class HTTPStatusFormatter:
+    STATUS_DICT = {
+        "200": ("✔ 200 OK", "✔ ۲۰۰ موفق"),
+        "204": ("✔ 204 No Content", "✔ ۲۰۴ بدون محتوا"),
+        "206": ("✔ 206 Partial Content", "✔ ۲۰۶ محتوای جزئی"),
+        "301": ("↗ 301 Moved Perm", "↗ ۳۰۱ انتقال دائم"),
+        "302": ("↗ 302 Found/Redirect", "↗ ۳۰۲ تغییر مسیر"),
+        "307": ("↗ 307 Temp Redirect", "↗ ۳۰۷ انتقال موقت"),
+        "308": ("↗ 308 Perm Redirect", "↗ ۳۰۸ انتقال دائم"),
+        "400": ("✖ 400 Bad Request", "✖ ۴۰۰ درخواست نامعتبر"),
+        "401": ("🔒 401 Unauthorized", "🔒 ۴۰۱ غیرمجاز"),
+        "403": ("⛔ 403 Forbidden", "⛔ ۴۰۳ مسدود (Forbidden)"),
+        "404": ("🔍 404 Not Found", "🔍 ۴۰۴ یافت نشد"),
+        "405": ("✖ 405 Not Allowed", "✖ ۴۰۵ متد غیرمجاز"),
+        "429": ("⏱ 429 Rate Limited", "⏱ ۴۲۹ محدودیت درخواست"),
+        "500": ("⚠ 500 Server Error", "⚠ ۵۰۰ خطای سرور"),
+        "502": ("✖ 502 Bad Gateway", "✖ ۵۰۲ گیت‌وی نامعتبر"),
+        "503": ("⚠ 503 Unavailable", "⚠ ۵۰۳ خارج از دسترس"),
+        "504": ("⏱ 504 Gateway Timeout", "⏱ ۵۰۴ تایم‌اوت گیت‌وی"),
+        "520": ("☁ 520 Cloudflare Err", "☁ ۵۲۰ خطای کلودفلر"),
+        "521": ("☁ 521 Web Server Down", "☁ ۵۲۱ سرور خاموش"),
+        "522": ("☁ 522 Connection Timeout", "☁ ۵۲۲ تایم‌اوت ارتباط"),
+        "523": ("☁ 523 Origin Unreach", "☁ ۵۲۳ مبدأ غیرقابل دسترس"),
+        "525": ("☁ 525 SSL Handshake Fail", "☁ ۵۲۵ شکست SSL")
+    }
+
+    @classmethod
+    def format_status(cls, raw_code: str, lang: str = "fa") -> str:
+        if not raw_code or raw_code == "-":
+            return "-"
+        code_match = re.search(r'\b\d{3}\b', raw_code)
+        if code_match:
+            code = code_match.group(0)
+            if code in cls.STATUS_DICT:
+                return cls.STATUS_DICT[code][1 if lang == "fa" else 0]
+        return raw_code
+
+# ==============================================================================
+# ۳. سیستم چندزبانه (i18n)
+# ==============================================================================
 LANG = {
     "fa": {
         "title": f"رادار پیشرفته تحلیل شبکه و SNI - {VERSION}",
@@ -147,12 +199,13 @@ LANG = {
         "theme_0": "☀️ روشن", "theme_1": "🌙 تاریک", "theme_2": "🌑 سیاه مطلق",
         "input_label": "ورودی هوشمند (دامنه، IPv4/IPv6، رنج خط‌تیره، CIDR، کانفیگ):",
         "paste": "📋 پیست", "browse": "📁 فایل", "clear": "🗑 پاک کردن", "dedup": "✨ حذف تکراری", "shuffle": "🔀 بر هم زدن",
-        "btn_range_mgr": "🌐 مدیریت رنج‌ها و تولید IP تصادفی",
+        "btn_range_mgr": "🌐 مدیریت رنج‌ها و تولید IP تصادفی (Ctrl+R)",
         "settings": "تنظیمات رادار و پویشگر",
         "default_sni": ":لیست SNI های هدف (هر خط یک مورد)",
         "btn_presets_sni": "🔍 لیست‌های آماده SNI",
         "target_ports": ":پورت‌های هدف (خط جدید یا کاما/خط فاصله)",
-        "speed_url": ":مسیر تست سرعت (مثال: /)",
+        "speed_url": ":مسیر یا پریست تست سرعت دانلود",
+        "speed_duration": ":مدت‌زمان تست سرعت هر سرور (ثانیه)",
         "max_cidr": ":حداکثر بسط ترتیبی از هر رنج (Hosts)",
         "threads": ":تعداد ترد موازی (Concurrency)",
         "timeout": ":زمان انتظار پاسخ سوکت (ثانیه)",
@@ -163,20 +216,20 @@ LANG = {
         "auto_scroll": "اسکرول خودکار جدول هنگام اسکن",
         "auto_save": "ذخیره خودکار config.json پس از پایان",
         "port_scan_mode": "اسکنر پورت سریع (بررسی همه پورت‌ها برای تارگت)",
-        "btn_save": "💾 ذخیره تنظیمات", "btn_stop": "🛑 توقف", "btn_start": "🚀 شروع رادار",
+        "btn_save": "💾 ذخیره تنظیمات (Ctrl+S)", "btn_stop": "🛑 توقف (Esc)", "btn_start": "🚀 شروع رادار (F5)",
         "stat_scans": "تست‌های انجام شده", "stat_success": "موفق (متصل)", "stat_ping": "فقط پینگ", "stat_down": "مسدود / خطا",
-        "btn_export_json": "ساخت config.json", "btn_export_csv": "خروجی اکسل (CSV)", "btn_export_custom": "⚙ خروجی سفارشی",
+        "btn_export_json": "ساخت config.json (Ctrl+E)", "btn_export_csv": "خروجی اکسل (Ctrl+Shift+E)", "btn_export_custom": "⚙ خروجی سفارشی",
         "lbl_sort": "برای مرتب‌سازی روی عناوین ستون‌ها کلیک کنید",
-        "col_select": "تیک", "col_target": "تارگت / ورودی", "col_ip": "آدرس IP", "col_port": "پورت", "col_icmp": "پینگ ICMP", "col_tcp": "پینگ TCP", "col_sni_http": "وضعیت اتصال", "col_cdn": "شبکه (CDN)", "col_speed": "سرعت", "col_score": "امتیاز", "col_status": "نتیجه نهایی",
-        "ready": "رادار هوشمند آماده اسکن شبکه است...",
+        "col_select": "تیک", "col_target": "تارگت / ورودی", "col_ip": "آدرس IP", "col_port": "پورت", "col_icmp": "پینگ ICMP", "col_tcp": "پینگ TCP", "col_sni_http": "وضعیت اتصال", "col_cdn": "شبکه (CDN)", "col_speed": "سرعت واقعی", "col_score": "امتیاز هوشمند", "col_status": "نتیجه نهایی",
+        "ready": "رادار هوشمند آماده اسکن شبکه است... (F5 برای شروع)",
         "msg_error": "خطا", "msg_success": "موفقیت", "msg_warning": "هشدار", "msg_info": "پیام",
-        "msg_no_target": "هیچ تارگت معتبری (دامنه، آی‌پی، رنج یا CIDR) در ورودی یافت نشد.",
+        "msg_no_target": "هیچ تارگت معتبری در ورودی یافت نشد.",
         "msg_copied": "در کلیپ‌بورد کپی شد.", "msg_empty_clipboard": "کلیپ‌بورد خالی است.",
         "msg_no_select": "هیچ ردیفی انتخاب نشده است (☑).", "msg_invalid_select": "ردیف انتخابی، اتصال معتبری ندارد.",
-        "msg_saved_json": "فایل config.json ساخته شد (منطبق با ابزارهای Spoofing).\nمسیر:", "msg_auto_saved": "بهترین سرور انتخاب و config.json آپدیت شد.",
+        "msg_saved_json": "فایل config.json ساخته شد (منطبق با ابزارهای Spoofing).\nمسیر:", "msg_auto_saved": "بهترین سرور با بالاترین سرعت انتخاب و config.json آپدیت شد.",
         "msg_no_export": "داده موفقی برای خروجی وجود ندارد.", "msg_csv_saved": "فایل CSV با موفقیت ذخیره شد.", "msg_txt_saved": "فایل متنی TXT با موفقیت ذخیره شد.",
         "msg_no_filter": "هیچ سروری با این فیلترها در لیست یافت نشد.",
-        "msg_scan_start": "در حال اسکن {} هدف شبکه...", "msg_scan_cancel": "عملیات متوقف شد. نتایج مرتب شدند.", "msg_scan_finish": "اسکن پایان یافت. نتایج مرتب شدند.",
+        "msg_scan_start": "در حال اسکن هوشمند {} هدف شبکه...", "msg_scan_cancel": "عملیات متوقف شد. نتایج بر اساس سرعت و امتیاز مرتب شدند.", "msg_scan_finish": "اسکن پایان یافت. نتایج بر اساس سرعت و امتیاز مرتب شدند.",
         "st_sni_usable": "✔ اس‌ان‌آی متصل", "st_tcp_ok": "✔ پورت باز", "st_ping_only": "◐ فقط پینگ", "st_down": "✖ مسدود", "st_timeout": "تایم‌اوت", "st_filtered": "✖ فیلتر شده",
         "st_valid": "معتبر (TLS OK)", "st_invalid": "ناموفق", "st_unknown": "نامشخص",
         "targets_count": "تارگت‌های کشف شده:",
@@ -209,12 +262,13 @@ LANG = {
         "theme_0": "☀️ Light", "theme_1": "🌙 Dark", "theme_2": "🌑 Pitch Black",
         "input_label": "Smart Input (Domains, IPv4/IPv6, Ranges, CIDR, Raw Configs):",
         "paste": "📋 Paste", "browse": "📁 File", "clear": "🗑 Clear", "dedup": "✨ Dupes", "shuffle": "🔀 Shuffle",
-        "btn_range_mgr": "🌐 Range Manager & Random IP Generator",
+        "btn_range_mgr": "🌐 Range Manager & Random IP (Ctrl+R)",
         "settings": "Radar & Scanner Settings",
         "default_sni": "SNI List (One per line):",
         "btn_presets_sni": "🔍 SNI Presets",
         "target_ports": "Target Ports (Comma/Newline/Dash):",
-        "speed_url": "Speed Test Path (e.g. /):",
+        "speed_url": "Speed Test Path or Preset:",
+        "speed_duration": "Speed Test Duration (Seconds):",
         "max_cidr": "Max Sequential Hosts per CIDR/Range:",
         "threads": "Parallel Threads (Concurrency):",
         "timeout": "Socket Timeout (Seconds):",
@@ -225,20 +279,20 @@ LANG = {
         "auto_scroll": "Auto-scroll table during scan",
         "auto_save": "Auto-create config.json on finish",
         "port_scan_mode": "Enable Port Scanner Mode",
-        "btn_save": "💾 Save Settings", "btn_stop": "🛑 Stop", "btn_start": "🚀 Start Radar",
+        "btn_save": "💾 Save Settings (Ctrl+S)", "btn_stop": "🛑 Stop (Esc)", "btn_start": "🚀 Start Radar (F5)",
         "stat_scans": "Scans Done", "stat_success": "Success (Connected)", "stat_ping": "Ping Only", "stat_down": "Blocked / Error",
-        "btn_export_json": "Create config.json", "btn_export_csv": "Export All (CSV)", "btn_export_custom": "⚙ Custom Export",
+        "btn_export_json": "Create config.json (Ctrl+E)", "btn_export_csv": "Export All (Ctrl+Shift+E)", "btn_export_custom": "⚙ Custom Export",
         "lbl_sort": "Click column headers to sort results",
-        "col_select": "Sel", "col_target": "Target", "col_ip": "IP Address", "col_port": "Port", "col_icmp": "ICMP Ping", "col_tcp": "TCP Ping", "col_sni_http": "Connection State", "col_cdn": "Provider", "col_speed": "Speed", "col_score": "Score", "col_status": "Verdict",
-        "ready": "Smart Radar is ready to probe...",
+        "col_select": "Sel", "col_target": "Target", "col_ip": "IP Address", "col_port": "Port", "col_icmp": "ICMP Ping", "col_tcp": "TCP Ping", "col_sni_http": "Connection State", "col_cdn": "Provider", "col_speed": "Real Speed", "col_score": "Smart Score", "col_status": "Verdict",
+        "ready": "Smart Radar is ready to probe... (Press F5 to start)",
         "msg_error": "Error", "msg_success": "Success", "msg_warning": "Warning", "msg_info": "Info",
-        "msg_no_target": "No valid targets (Domain, IP, Range, CIDR) found in input.",
+        "msg_no_target": "No valid targets found in input.",
         "msg_copied": "Copied to clipboard.", "msg_empty_clipboard": "Clipboard is empty.",
         "msg_no_select": "No item selected (☑).", "msg_invalid_select": "Selected row does not have a valid connection.",
-        "msg_saved_json": "config.json created (Compatible with Spoofing tools).\nPath:", "msg_auto_saved": "Best server selected and config.json updated.",
+        "msg_saved_json": "config.json created (Compatible with Spoofing tools).\nPath:", "msg_auto_saved": "Best high-speed server selected and config.json updated.",
         "msg_no_export": "No successful data to export.", "msg_csv_saved": "CSV Saved successfully.", "msg_txt_saved": "TXT Saved successfully.",
         "msg_no_filter": "No results match these filters.",
-        "msg_scan_start": "Scanning {} network targets...", "msg_scan_cancel": "Cancelled. Results sorted.", "msg_scan_finish": "Finished. Results sorted.",
+        "msg_scan_start": "Smart scanning {} network targets...", "msg_scan_cancel": "Cancelled. Results sorted by Score & Speed.", "msg_scan_finish": "Finished. Results sorted by Score & Speed.",
         "st_sni_usable": "✔ SNI Usable", "st_tcp_ok": "✔ Port Open", "st_ping_only": "◐ Ping Only", "st_down": "✖ Blocked", "st_timeout": "Timeout", "st_filtered": "✖ Filtered",
         "st_valid": "Valid (TLS OK)", "st_invalid": "Failed", "st_unknown": "Unknown",
         "targets_count": "Extracted Targets:",
@@ -266,10 +320,9 @@ LANG = {
 }
 
 # ==============================================================================
-# ۲. ماژول ابزارهای شبکه و ساخت پکت واقعی TLS 1.3 ClientHello (الهام‌گرفته از Spoofing Core)
+# ۴. ماژول‌های کمکی شبکه و ساخت پکت واقعی TLS 1.3 ClientHello
 # ==============================================================================
 class NetworkInterfaceHelper:
-    """کشف رابط‌های فعال شبکه محلی جهت هماهنگی با پروکسی‌های محلی"""
     @staticmethod
     def get_default_interface_ipv4(target_ip="8.8.8.8") -> str:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -281,23 +334,7 @@ class NetworkInterfaceHelper:
         finally:
             s.close()
 
-    @staticmethod
-    def get_default_interface_ipv6(target_ip="2001:4860:4860::8888") -> str:
-        s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-        try:
-            s.connect((target_ip, 53))
-            return s.getsockname()[0]
-        except OSError:
-            return "::1"
-        finally:
-            s.close()
-
-
 class ClientHelloMaker:
-    """
-    ساخت الگوی واقعی و استاندارد TLS 1.3 ClientHello به سبک مرورگر
-    شامل اکستنشن‌های ALPN (h2 / http/1.1)، KeyShare، SupportedVersions و Padding اختصاصی.
-    """
     tls_ch_template_str = (
         "1603010200010001fc030341d5b549d9cd1adfa7296c8418d157dc7b624c842824ff493b9375bb48d34f2b20"
         "bf018bcc90a7c89a230094815ad0c15b736e38c01209d72d282cb5e2105328150024130213031301c02cc030"
@@ -342,10 +379,9 @@ class ClientHelloMaker:
         )
 
 # ==============================================================================
-# ۳. ماژول استخراج هوشمند ورودی‌ها (Smart Target Extractor)
+# ۵. ماژول استخراج هوشمند ورودی‌ها (Smart Target Extractor)
 # ==============================================================================
 class SmartTargetExtractor:
-    """استخراج دقیق IPv4، IPv6، رنج‌های خط‌تیره، ساب‌نت‌های CIDR و لینک‌های کانفیگ"""
     IPV4_CIDR_PATTERN = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}/(?:[0-9]|[12][0-9]|3[0-2])\b')
     IPV6_CIDR_PATTERN = re.compile(r'\b(?:[0-9a-fA-F]{1,4}:){1,7}:?/[0-9]{1,3}\b')
     IPV4_RANGE_PATTERN = re.compile(r'\b((?:\d{1,3}\.){3}\d{1,3})\s*-\s*((?:\d{1,3}\.){3}\d{1,3})\b')
@@ -361,7 +397,6 @@ class SmartTargetExtractor:
         extracted = []
         working_text = raw_text
 
-        # ۱. استخراج تارگت از لینک‌های کانفیگ
         uri_matches = re.findall(r'(?:https?|vless|vmess|trojan|ss|ssr)://([^\s\'"<>]+)', working_text, re.IGNORECASE)
         for uri in uri_matches:
             target_part = uri.split('#')[0].split('?')[0].split('/')[0]
@@ -369,7 +404,6 @@ class SmartTargetExtractor:
                 target_part = target_part.split('@')[-1]
             working_text += f" {target_part} "
 
-        # ۲. استخراج و بسط IPv4 CIDR
         for cidr in cls.IPV4_CIDR_PATTERN.findall(working_text):
             try:
                 net = ipaddress.ip_network(cidr, strict=False)
@@ -377,15 +411,12 @@ class SmartTargetExtractor:
                 for ip in net.hosts():
                     extracted.append({"label": str(ip), "host": str(ip), "port": None, "type": "ipv4"})
                     count += 1
-                    if count >= max_cidr_hosts:
-                        break
+                    if count >= max_cidr_hosts: break
                 if count == 0 and net.num_addresses == 1:
                     extracted.append({"label": str(net.network_address), "host": str(net.network_address), "port": None, "type": "ipv4"})
-            except ValueError:
-                pass
+            except ValueError: pass
         working_text = cls.IPV4_CIDR_PATTERN.sub(' ', working_text)
 
-        # ۳. استخراج و بسط IPv6 CIDR
         for cidr in cls.IPV6_CIDR_PATTERN.findall(working_text):
             try:
                 net = ipaddress.ip_network(cidr, strict=False)
@@ -393,15 +424,12 @@ class SmartTargetExtractor:
                 for ip in net.hosts():
                     extracted.append({"label": str(ip), "host": str(ip), "port": None, "type": "ipv6"})
                     count += 1
-                    if count >= max_cidr_hosts:
-                        break
+                    if count >= max_cidr_hosts: break
                 if count == 0 and net.num_addresses == 1:
                     extracted.append({"label": str(net.network_address), "host": str(net.network_address), "port": None, "type": "ipv6"})
-            except ValueError:
-                pass
+            except ValueError: pass
         working_text = cls.IPV6_CIDR_PATTERN.sub(' ', working_text)
 
-        # ۴. استخراج رنج‌های خط‌تیره
         for start_ip, end_ip in cls.IPV4_RANGE_PATTERN.findall(working_text):
             try:
                 ip1 = ipaddress.IPv4Address(start_ip)
@@ -411,40 +439,32 @@ class SmartTargetExtractor:
                     for i in range(span):
                         curr = str(ipaddress.IPv4Address(int(ip1) + i))
                         extracted.append({"label": curr, "host": curr, "port": None, "type": "ipv4"})
-            except ValueError:
-                pass
+            except ValueError: pass
         working_text = cls.IPV4_RANGE_PATTERN.sub(' ', working_text)
 
-        # ۵. استخراج IPv6 با پورت
         for ip6, port_str in cls.IPV6_WITH_PORT_PATTERN.findall(working_text):
             try:
                 ipaddress.IPv6Address(ip6)
                 p = int(port_str) if 0 < int(port_str) <= 65535 else None
                 extracted.append({"label": f"[{ip6}]" + (f":{p}" if p else ""), "host": ip6, "port": p, "type": "ipv6"})
-            except ValueError:
-                pass
+            except ValueError: pass
         working_text = cls.IPV6_WITH_PORT_PATTERN.sub(' ', working_text)
 
-        # ۶. استخراج IPv6 تکی
         for ip6 in cls.IPV6_PLAIN_PATTERN.findall(working_text):
             try:
                 ipaddress.IPv6Address(ip6)
                 extracted.append({"label": ip6, "host": ip6, "port": None, "type": "ipv6"})
-            except ValueError:
-                pass
+            except ValueError: pass
         working_text = cls.IPV6_PLAIN_PATTERN.sub(' ', working_text)
 
-        # ۷. استخراج IPv4 با یا بدون پورت
         for ip4, port_str in cls.IPV4_PATTERN.findall(working_text):
             try:
                 ipaddress.IPv4Address(ip4)
                 p = int(port_str) if port_str and 0 < int(port_str) <= 65535 else None
                 extracted.append({"label": f"{ip4}" + (f":{p}" if p else ""), "host": ip4, "port": p, "type": "ipv4"})
-            except ValueError:
-                pass
+            except ValueError: pass
         working_text = cls.IPV4_PATTERN.sub(' ', working_text)
 
-        # ۸. استخراج دامنه‌ها
         for domain, port_str in cls.DOMAIN_PATTERN.findall(working_text):
             label = domain
             if remove_http and label.lower().startswith("www."):
@@ -463,7 +483,7 @@ class SmartTargetExtractor:
         return unique_results
 
 # ==============================================================================
-# ۴. ماژول تولید آی‌پی‌های تصادفی بدون سرریز حافظه (Random IP Generator)
+# ۶. ماژول تولید آی‌پی‌های تصادفی (Random IP Generator)
 # ==============================================================================
 class RandomIPGenerator:
     @staticmethod
@@ -475,16 +495,13 @@ class RandomIPGenerator:
             try:
                 net = ipaddress.ip_network(c, strict=False)
                 networks.append(net)
-            except ValueError:
-                pass
+            except ValueError: pass
 
-        if not networks:
-            return []
+        if not networks: return []
 
         def get_single_random_ip(net):
             num = net.num_addresses
-            if num <= 2:
-                return str(net.network_address)
+            if num <= 2: return str(net.network_address)
             max_offset = min(num - 2, (1 << 64) - 1)
             offset = random.randint(1, max_offset)
             return str(ipaddress.ip_address(int(net.network_address) + offset))
@@ -514,7 +531,7 @@ class RandomIPGenerator:
         return results
 
 # ==============================================================================
-# ۵. دیالوگ گرافیکی مدیریت رنج‌های CDN و ساخت IP تصادفی
+# ۷. دیالوگ مدیریت رنج‌های CDN و ساخت آی‌پی تصادفی
 # ==============================================================================
 class RangeManagerDialog(tk.Toplevel):
     def __init__(self, parent, current_lang, theme_state, on_inject_callback):
@@ -645,12 +662,12 @@ class RangeManagerDialog(tk.Toplevel):
         self.destroy()
 
 # ==============================================================================
-# ۶. کلاس اصلی برنامه و موتور رادار تحلیل شبکه
+# ۸. کلاس اصلی نرم‌افزار، موتور اسکنر و ناوبری سراسری
 # ==============================================================================
 class SNIScannerApp:
     def __init__(self, root):
         self.root = root
-        self.root.geometry("1420x920")
+        self.root.geometry("1440x940")
         self.root.minsize(1100, 700)
         
         self.current_lang = "fa"
@@ -679,7 +696,7 @@ class SNIScannerApp:
         self.load_settings()
         self.apply_theme()
         self.setup_context_menu()
-        self.bind_hotkeys()
+        self.bind_global_hotkeys()
         self.apply_language()
         
         threading.Thread(target=self.fetch_public_network_info, daemon=True).start()
@@ -715,37 +732,68 @@ class SNIScannerApp:
             self.root.after(0, lambda: self.lbl_isp_val.configure(text=f"Offline / Loc: {local_ip}", foreground="#dc3545"))
             self.root.after(0, lambda: self.lbl_isp_warn.configure(text=""))
 
-    def bind_hotkeys(self):
-        self.root.bind_class("Text", "<Control-a>", self.select_all)
-        self.root.bind_class("Text", "<Control-A>", self.select_all)
-        self.root.bind_class("Text", "<Control-c>", self.copy_text)
-        self.root.bind_class("Text", "<Control-v>", self.paste_text)
-        self.root.bind_class("Text", "<Control-x>", self.cut_text)
+    def bind_global_hotkeys(self):
+        # هات‌کی‌های سراسری متنی
+        for widget in ("Text", "Entry", "TEntry", "Combobox", "TCombobox"):
+            self.root.bind_class(widget, "<Control-a>", self.hotkey_select_all)
+            self.root.bind_class(widget, "<Control-A>", self.hotkey_select_all)
+            self.root.bind_class(widget, "<Control-c>", self.hotkey_copy)
+            self.root.bind_class(widget, "<Control-C>", self.hotkey_copy)
+            self.root.bind_class(widget, "<Control-v>", self.hotkey_paste)
+            self.root.bind_class(widget, "<Control-V>", self.hotkey_paste)
+            self.root.bind_class(widget, "<Control-x>", self.hotkey_cut)
+            self.root.bind_class(widget, "<Control-X>", self.hotkey_cut)
 
-    def select_all(self, event):
-        event.widget.tag_add("sel", "1.0", "end")
+        # هات‌کی‌های کنترلی سراسری
+        self.root.bind("<F5>", lambda e: self.start_scan() if not self.is_scanning else None)
+        self.root.bind("<Control-Return>", lambda e: self.start_scan() if not self.is_scanning else None)
+        self.root.bind("<Escape>", lambda e: self.stop_scan() if self.is_scanning else None)
+        self.root.bind("<Control-s>", lambda e: self.save_settings())
+        self.root.bind("<Control-S>", lambda e: self.save_settings())
+        self.root.bind("<Control-e>", lambda e: self.export_config())
+        self.root.bind("<Control-E>", lambda e: self.export_config())
+        self.root.bind("<Control-Shift-E>", lambda e: self.export_csv())
+        self.root.bind("<Control-Shift-e>", lambda e: self.export_csv())
+        self.root.bind("<Control-r>", lambda e: self.open_range_manager())
+        self.root.bind("<Control-R>", lambda e: self.open_range_manager())
+        self.root.bind("<Control-d>", lambda e: self.remove_duplicates())
+        self.root.bind("<Control-D>", lambda e: self.remove_duplicates())
+
+    def hotkey_select_all(self, event):
+        if hasattr(event.widget, "tag_add"):
+            event.widget.tag_add("sel", "1.0", "end")
+        elif hasattr(event.widget, "select_range"):
+            event.widget.select_range(0, 'end')
         return "break"
         
-    def copy_text(self, event):
-        if event.widget.tag_ranges("sel"):
-            self.root.clipboard_clear()
-            self.root.clipboard_append(event.widget.get("sel.first", "sel.last"))
-        return "break"
-        
-    def paste_text(self, event):
+    def hotkey_copy(self, event):
+        try:
+            if hasattr(event.widget, "tag_ranges") and event.widget.tag_ranges("sel"):
+                self.root.clipboard_clear()
+                self.root.clipboard_append(event.widget.get("sel.first", "sel.last"))
+                return "break"
+            elif hasattr(event.widget, "selection_get"):
+                self.root.clipboard_clear()
+                self.root.clipboard_append(event.widget.selection_get())
+                return "break"
+        except tk.TclError: pass
+
+    def hotkey_paste(self, event):
         try:
             text = self.root.clipboard_get()
-            event.widget.insert("insert", text)
-        except tk.TclError:
-            pass
-        return "break"
-        
-    def cut_text(self, event):
-        if event.widget.tag_ranges("sel"):
-            self.root.clipboard_clear()
-            self.root.clipboard_append(event.widget.get("sel.first", "sel.last"))
-            event.widget.delete("sel.first", "sel.last")
-        return "break"
+            if hasattr(event.widget, "insert"):
+                event.widget.insert("insert", text)
+            return "break"
+        except tk.TclError: pass
+
+    def hotkey_cut(self, event):
+        try:
+            if hasattr(event.widget, "tag_ranges") and event.widget.tag_ranges("sel"):
+                self.root.clipboard_clear()
+                self.root.clipboard_append(event.widget.get("sel.first", "sel.last"))
+                event.widget.delete("sel.first", "sel.last")
+                return "break"
+        except tk.TclError: pass
 
     def setup_context_menu(self):
         self.tree_menu = tk.Menu(self.root, tearoff=0)
@@ -808,7 +856,7 @@ class SNIScannerApp:
         self.root.columnconfigure(1, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        # ====== پنل سمت راست ======
+        # ====== پنل راست ======
         self.right_panel = ttk.Frame(self.root)
         self.right_panel.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         self.right_panel.columnconfigure(0, weight=1)
@@ -862,13 +910,13 @@ class SNIScannerApp:
 
         row_idx = 0
         sni_frame = ttk.Frame(self.settings_frame)
-        sni_frame.grid(row=row_idx, column=0, sticky="ew", padx=5, pady=5)
+        sni_frame.grid(row=row_idx, column=0, sticky="ew", padx=5, pady=4)
         self.sni_input = tk.Text(sni_frame, height=3, width=25, font=("Consolas", 10), undo=True)
         self.sni_input.insert("1.0", "www.hcaptcha.com")
         self.sni_input.pack(side="left", fill="x", expand=True)
         
         sni_lbl_frame = ttk.Frame(self.settings_frame)
-        sni_lbl_frame.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        sni_lbl_frame.grid(row=row_idx, column=1, sticky="e", padx=5, pady=4)
         self.lbl_set_sni = ttk.Label(sni_lbl_frame)
         self.lbl_set_sni.pack(side="top", anchor="e")
         self.btn_presets_sni = ttk.Button(sni_lbl_frame, command=self.show_sni_presets)
@@ -876,42 +924,55 @@ class SNIScannerApp:
         
         row_idx += 1
         ports_frame = ttk.Frame(self.settings_frame)
-        ports_frame.grid(row=row_idx, column=0, sticky="ew", padx=5, pady=5)
+        ports_frame.grid(row=row_idx, column=0, sticky="ew", padx=5, pady=4)
         self.ports_input = tk.Text(ports_frame, height=2, width=25, font=("Consolas", 10), undo=True)
         self.ports_input.insert("1.0", DEFAULT_PORTS)
         self.ports_input.pack(side="left", fill="x", expand=True)
         self.lbl_set_ports = ttk.Label(self.settings_frame)
-        self.lbl_set_ports.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        self.lbl_set_ports.grid(row=row_idx, column=1, sticky="e", padx=5, pady=4)
 
         row_idx += 1
-        self.speed_url_var = tk.StringVar(value=DEFAULT_SPEED_URL)
-        ttk.Entry(self.settings_frame, textvariable=self.speed_url_var, justify="left").grid(row=row_idx, column=0, sticky="ew", padx=5, pady=5)
+        speed_opts_frame = ttk.Frame(self.settings_frame)
+        speed_opts_frame.grid(row=row_idx, column=0, sticky="ew", padx=5, pady=4)
+        speed_opts_frame.columnconfigure(0, weight=1)
+
+        self.speed_url_var = tk.StringVar(value="/cdn-cgi/trace")
+        preset_urls = [p[0] for p in SPEED_TEST_PRESETS]
+        self.speed_combo = ttk.Combobox(speed_opts_frame, textvariable=self.speed_url_var, values=preset_urls, justify="left")
+        self.speed_combo.grid(row=0, column=0, sticky="ew")
+
         self.lbl_set_speed_url = ttk.Label(self.settings_frame)
-        self.lbl_set_speed_url.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        self.lbl_set_speed_url.grid(row=row_idx, column=1, sticky="e", padx=5, pady=4)
+
+        row_idx += 1
+        self.speed_duration_var = tk.DoubleVar(value=3.0)
+        ttk.Entry(self.settings_frame, textvariable=self.speed_duration_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=4)
+        self.lbl_set_speed_dur = ttk.Label(self.settings_frame)
+        self.lbl_set_speed_dur.grid(row=row_idx, column=1, sticky="e", padx=5, pady=4)
 
         row_idx += 1
         self.cidr_limit_var = tk.IntVar(value=256)
-        ttk.Entry(self.settings_frame, textvariable=self.cidr_limit_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=5)
+        ttk.Entry(self.settings_frame, textvariable=self.cidr_limit_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=4)
         self.lbl_set_cidr = ttk.Label(self.settings_frame)
-        self.lbl_set_cidr.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        self.lbl_set_cidr.grid(row=row_idx, column=1, sticky="e", padx=5, pady=4)
 
         row_idx += 1
-        self.threads_var = tk.IntVar(value=35)
-        ttk.Entry(self.settings_frame, textvariable=self.threads_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=5)
+        self.threads_var = tk.IntVar(value=30)
+        ttk.Entry(self.settings_frame, textvariable=self.threads_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=4)
         self.lbl_set_threads = ttk.Label(self.settings_frame)
-        self.lbl_set_threads.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        self.lbl_set_threads.grid(row=row_idx, column=1, sticky="e", padx=5, pady=4)
 
         row_idx += 1
         self.timeout_var = tk.DoubleVar(value=2.0)
-        ttk.Entry(self.settings_frame, textvariable=self.timeout_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=5)
+        ttk.Entry(self.settings_frame, textvariable=self.timeout_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=4)
         self.lbl_set_timeout = ttk.Label(self.settings_frame)
-        self.lbl_set_timeout.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        self.lbl_set_timeout.grid(row=row_idx, column=1, sticky="e", padx=5, pady=4)
 
         row_idx += 1
         self.retry_count_var = tk.IntVar(value=2)
-        ttk.Entry(self.settings_frame, textvariable=self.retry_count_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=5)
+        ttk.Entry(self.settings_frame, textvariable=self.retry_count_var, width=10, justify="center").grid(row=row_idx, column=0, sticky="e", padx=5, pady=4)
         self.lbl_set_retry = ttk.Label(self.settings_frame)
-        self.lbl_set_retry.grid(row=row_idx, column=1, sticky="e", padx=5, pady=5)
+        self.lbl_set_retry.grid(row=row_idx, column=1, sticky="e", padx=5, pady=4)
 
         row_idx += 1
         self.port_scan_var = tk.BooleanVar(value=False)
@@ -958,7 +1019,7 @@ class SNIScannerApp:
         self.btn_start = ttk.Button(btn_frame, style="Primary.TButton", command=self.start_scan)
         self.btn_start.grid(row=0, column=2, sticky="nsew", padx=2)
 
-        # ====== پنل سمت چپ ======
+        # ====== پنل چپ ======
         self.left_panel = ttk.Frame(self.root)
         self.left_panel.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         self.left_panel.columnconfigure(0, weight=1)
@@ -1016,16 +1077,16 @@ class SNIScannerApp:
         self.tree = ttk.Treeview(self.left_panel, columns=columns, show="headings")
         
         self.tree.column("select", width=40, anchor="center")
-        self.tree.column("target", width=130, anchor="w")
-        self.tree.column("ip", width=140, anchor="center")
+        self.tree.column("target", width=125, anchor="w")
+        self.tree.column("ip", width=135, anchor="center")
         self.tree.column("port", width=55, anchor="center")
         self.tree.column("icmp", width=105, anchor="center") 
         self.tree.column("tcp_ping", width=75, anchor="center")
-        self.tree.column("sni_http", width=100, anchor="center")
-        self.tree.column("cdn", width=110, anchor="center")
-        self.tree.column("speed", width=85, anchor="center")
+        self.tree.column("sni_http", width=120, anchor="center")
+        self.tree.column("cdn", width=100, anchor="center")
+        self.tree.column("speed", width=95, anchor="center")
         self.tree.column("score", width=80, anchor="center")
-        self.tree.column("status", width=100, anchor="center")
+        self.tree.column("status", width=95, anchor="center")
 
         self.tree.grid(row=4, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(self.left_panel, orient=tk.VERTICAL, command=self.tree.yview)
@@ -1078,6 +1139,7 @@ class SNIScannerApp:
         self.btn_presets_sni.configure(text=t["btn_presets_sni"])
         self.lbl_set_ports.configure(text=t["target_ports"])
         self.lbl_set_speed_url.configure(text=t["speed_url"])
+        self.lbl_set_speed_dur.configure(text=t["speed_duration"])
         self.lbl_set_cidr.configure(text=t["max_cidr"])
         self.lbl_set_threads.configure(text=t["threads"])
         self.lbl_set_timeout.configure(text=t["timeout"])
@@ -1179,8 +1241,7 @@ class SNIScannerApp:
     def format_time(self, seconds):
         m, s = divmod(int(seconds), 60)
         h, m = divmod(m, 60)
-        if h > 0:
-            return f"{h:02d}:{m:02d}:{s:02d}"
+        if h > 0: return f"{h:02d}:{m:02d}:{s:02d}"
         return f"{m:02d}:{s:02d}"
 
     def update_timer(self):
@@ -1228,6 +1289,7 @@ class SNIScannerApp:
             "ports": self.ports_input.get("1.0", tk.END).strip(),
             "snis": self.sni_input.get("1.0", tk.END).strip(),
             "speed_url": self.speed_url_var.get(),
+            "speed_duration": self.speed_duration_var.get(),
             "cidr_limit": self.cidr_limit_var.get(),
             "threads": self.threads_var.get(),
             "timeout": self.timeout_var.get(),
@@ -1261,9 +1323,10 @@ class SNIScannerApp:
             self.sni_input.delete("1.0", tk.END)
             self.sni_input.insert("1.0", settings.get("snis", "www.hcaptcha.com"))
             
-            self.speed_url_var.set(settings.get("speed_url", DEFAULT_SPEED_URL))
+            self.speed_url_var.set(settings.get("speed_url", "/cdn-cgi/trace"))
+            self.speed_duration_var.set(settings.get("speed_duration", 3.0))
             self.cidr_limit_var.set(settings.get("cidr_limit", 256))
-            self.threads_var.set(settings.get("threads", 35))
+            self.threads_var.set(settings.get("threads", 30))
             self.timeout_var.set(settings.get("timeout", 2.0))
             self.retry_count_var.set(settings.get("retry_count", 2))
             self.port_scan_var.set(settings.get("port_scan", False))
@@ -1325,8 +1388,13 @@ class SNIScannerApp:
         l = [(self.tree.set(k, col), k) for k in self.tree.get_children('')]
         if col in ("icmp", "tcp_ping", "speed", "port", "score"):
             def extract_number(val):
-                nums = re.findall(r'\d+\.?\d*', str(val))
-                return float(nums[0]) if nums else (999999.0 if col in ("icmp", "tcp_ping") else 0.0)
+                # تبدیل MB/s به KB/s در سورتینگ عددی
+                val_str = str(val)
+                nums = re.findall(r'\d+\.?\d*', val_str)
+                if not nums: return 999999.0 if col in ("icmp", "tcp_ping") else 0.0
+                num = float(nums[0])
+                if "MB/s" in val_str: num *= 1024.0
+                return num
             l.sort(key=lambda t: extract_number(t[0]), reverse=reverse)
         else:
             l.sort(reverse=reverse)
@@ -1384,8 +1452,7 @@ class SNIScannerApp:
             t_param = '-w'
             t_val = str(int(timeout * 1000))
             cmd = ['ping', param, '1', t_param, t_val]
-            if is_v6:
-                cmd.insert(1, '-6')
+            if is_v6: cmd.insert(1, '-6')
             cmd.append(ip)
             kwargs = {'creationflags': 0x08000000}
         else:
@@ -1393,8 +1460,7 @@ class SNIScannerApp:
             t_param = '-W'
             t_val = str(max(1, int(timeout)))
             cmd = ['ping', param, '1', t_param, t_val]
-            if is_v6:
-                cmd.insert(1, '-6')
+            if is_v6: cmd.insert(1, '-6')
             cmd.append(ip)
             kwargs = {}
 
@@ -1402,32 +1468,55 @@ class SNIScannerApp:
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 1, **kwargs)
             if res.returncode == 0:
                 match = re.search(r'time[=<]\s*(\d+(?:\.\d+)?)', res.stdout, re.IGNORECASE)
-                if match:
-                    return True, float(match.group(1))
+                if match: return True, float(match.group(1))
                 return True, 1.0
         except Exception:
             pass
         return False, None
 
-    def calculate_score(self, ping, tcp, tls_ok, tcp_ok, speed, jitter, throttled, stability):
+    # ==============================================================================
+    # سیستم نمره‌دهی هوشمند چندمعیاره با اولویت حداکثری سرعت واقعی (Speed-Weighted Score)
+    # ==============================================================================
+    def calculate_score(self, ping, tcp_ms, tls_ok, tcp_ok, speed_kb, jitter, throttled, stability):
+        if not tls_ok and not tcp_ok:
+            return 0
+
         score = 0.0
-        if tls_ok: score += 40.0
-        elif tcp_ok: score += 20.0
-        
-        if ping is not None:
-            score += max(0.0, min(25.0, 25.0 * (1.0 - (ping - 40.0) / 460.0)))
-            
-        if jitter is not None:
-            score += max(0.0, min(15.0, 15.0 * (1.0 - (jitter - 5.0) / 95.0)))
-            
-        if speed > 0:
-            score += max(0.0, min(10.0, 10.0 * (speed / 1000.0)))
-            
+
+        # ۱. وضعیت اتصال پایه و هندشیک امن (حداکثر ۲۰ امتیاز)
+        if tls_ok: score += 20.0
+        elif tcp_ok: score += 10.0
+
+        # ۲. سرعت واقعی دانلود به صورت پیوسته و غیرپله‌ای (حداکثر ۴۵ امتیاز اولویت اول)
+        # مقیاس پیوسته لگاریتمی تا سقف ۵۰ مگابایت بر ثانیه (51,200 KB/s)
+        if speed_kb > 0:
+            speed_clamped = max(10.0, min(51200.0, speed_kb))
+            # نسبت لگاریتمی پیوسته
+            speed_factor = (math.log10(speed_clamped) - 1.0) / (math.log10(51200.0) - 1.0)
+            score += max(0.0, min(45.0, speed_factor * 45.0))
+
+        # ۳. تأخیر شبکه (RTT Ping / Latency) (حداکثر ۲۰ امتیاز)
+        latency = tcp_ms if tcp_ms is not None else ping
+        if latency is not None:
+            lat_clamped = max(40.0, min(600.0, latency))
+            score += (1.0 - (lat_clamped - 40.0) / 560.0) * 20.0
+
+        # ۴. پایداری بسته و جیتر خط اینترنت (حداکثر ۱۵ امتیاز)
         score += (stability / 100.0) * 10.0
-            
+        if jitter is not None:
+            jit_clamped = max(2.0, min(100.0, jitter))
+            score += (1.0 - (jit_clamped - 2.0) / 98.0) * 5.0
+        else:
+            score += 3.0
+
+        # جریمه سنگین افت سرعت ناگهانی (Throttling Penalty)
         if throttled:
-            score -= 30.0
-            
+            score -= 25.0
+
+        # اگر TLS برقرار نشد، سقف نمره به ۳۵ محدود می‌شود
+        if not tls_ok and tcp_ok:
+            score = min(score, 35.0)
+
         return min(100, max(0, int(round(score))))
 
     def parse_ports_input(self, raw_text):
@@ -1440,12 +1529,10 @@ class SNIScannerApp:
                 try:
                     start, end = map(int, part.split('-'))
                     ports.extend(range(start, end + 1))
-                except ValueError:
-                    pass
+                except ValueError: pass
             elif part.isdigit():
                 p = int(part)
-                if 0 < p <= 65535:
-                    ports.append(p)
+                if 0 < p <= 65535: ports.append(p)
         return sorted(list(set(ports)))
 
     def scan_worker(self, task):
@@ -1458,6 +1545,7 @@ class SNIScannerApp:
         timeout_val = self.timeout_var.get()
         strict_ping = self.strict_ping_var.get()
         retry_max = max(1, self.retry_count_var.get())
+        speed_max_duration = max(1.0, float(self.speed_duration_var.get()))
         t = LANG[self.current_lang]
 
         clean_sni = re.sub(r'(?i)^https?://', '', sni_to_use).split('/')[0]
@@ -1501,7 +1589,7 @@ class SNIScannerApp:
         tcp_ok = False
         tcp_ms = None
         tls_ok = False
-        http_status = "-"
+        raw_http_status = "-"
         speed_kb = 0.0
         throttled = False
         raw_headers = ""
@@ -1513,38 +1601,35 @@ class SNIScannerApp:
                 tcp_ok = True
                 
                 req_path = self.speed_url_var.get().strip()
-                if not req_path.startswith('/'):
-                    req_path = '/' + req_path
+                if not req_path.startswith('/'): req_path = '/' + req_path
                 
-                req_str = f"GET {req_path} HTTP/1.1\r\nHost: {clean_sni}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\nConnection: close\r\n\r\n"
+                req_str = f"GET {req_path} HTTP/1.1\r\nHost: {clean_sni}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nAccept: */*\r\nConnection: close\r\n\r\n"
                 
                 if port in [443, 8443, 2053, 2083, 2087, 2096]:
-                    # تست استاندارد و بررسی دست‌تکانی TLS با ALPN
                     ctx = ssl.create_default_context()
                     ctx.check_hostname = False
                     ctx.verify_mode = ssl.CERT_NONE
-                    try:
-                        ctx.set_alpn_protocols(['h2', 'http/1.1'])
-                    except Exception:
-                        pass
+                    try: ctx.set_alpn_protocols(['h2', 'http/1.1'])
+                    except Exception: pass
                     
                     try:
                         ssock = ctx.wrap_socket(sock, server_hostname=clean_sni)
                         tls_ok = True
                         target_sock = ssock
                     except Exception:
-                        # اگر لایه OpenSSL مسدود شد، بررسی صحت اتصال با پکت استاندارد ClientHelloMaker
                         raw_ch = ClientHelloMaker.get_client_hello(clean_sni)
                         sock.sendall(raw_ch)
                         resp_head = sock.recv(5)
-                        if resp_head and resp_head[0] == 0x16:  # TLS Handshake Record
+                        if resp_head and resp_head[0] == 0x16:
                             tls_ok = True
                         target_sock = None
                 else:
                     target_sock = sock
 
-                if target_sock and tls_ok or (target_sock and port not in [443, 8443, 2053, 2083, 2087, 2096]):
-                    start_dl = time.time()
+                # تست دانلود و اندازه‌گیری سرعت واقعی با بافر بهینه ۶۴ کیلوبایتی
+                if target_sock and (tls_ok or port not in [443, 8443, 2053, 2083, 2087, 2096]):
+                    target_sock.settimeout(timeout_val)
+                    start_dl = time.perf_counter()
                     target_sock.sendall(req_str.encode())
                     
                     bytes_recv = 0
@@ -1553,56 +1638,71 @@ class SNIScannerApp:
                     last_sample_time = start_dl
                     
                     while True:
-                        data = target_sock.recv(16384)
-                        if not data: break
-                        now = time.time()
+                        try:
+                            data = target_sock.recv(65536)
+                            if not data: break
+                        except (socket.timeout, ssl.SSLError):
+                            break
+
+                        now = time.perf_counter()
                         
                         if first_chunk:
                             parts = data.split(b'\r\n\r\n', 1)
                             raw_headers = parts[0].decode(errors='ignore')
                             if raw_headers.startswith('HTTP'): 
-                                http_status = raw_headers.split(' ', 1)[-1].split('\r')[0]
+                                raw_http_status = raw_headers.split(' ', 1)[-1].split('\r')[0]
                             first_chunk = False
                             
                         bytes_recv += len(data)
                         
-                        if now - last_sample_time >= 0.5:
+                        if now - last_sample_time >= 0.3:
                             samples.append(bytes_recv)
                             last_sample_time = now
                             
-                        if now - start_dl > 2.0: break 
+                        if now - start_dl >= speed_max_duration: break 
                         
-                    duration = max(time.time() - start_dl, 0.001)
+                    duration = max(time.perf_counter() - start_dl, 0.001)
                     speed_kb = round((bytes_recv / 1024) / duration, 1)
                     
+                    # الگوریتم سنجش افت شدید سرعت جریان (Throttling Detection)
                     if len(samples) >= 3:
                         mid = len(samples) // 2
                         s1 = samples[:mid]
                         s2 = samples[mid:]
-                        avg1 = sum(s1) / len(s1)
-                        avg2 = sum(s2) / len(s2)
-                        if avg1 > 0 and (avg1 - avg2) / avg1 > 0.4:
+                        avg1 = sum(s1) / max(1, len(s1))
+                        avg2 = sum(s2) / max(1, len(s2))
+                        if avg1 > 0 and (avg1 - avg2) / avg1 > 0.45:
                             throttled = True
         except Exception:
             pass
         
         cdn_name = self.detect_cdn(test_ip, raw_headers)
         score_val = self.calculate_score(ping_avg, tcp_ms, tls_ok, tcp_ok, speed_kb, jitter, throttled, stability)
-        sni_http_display = http_status if http_status != "-" else (t["st_valid"] if tls_ok else (t["st_invalid"] if tcp_ok else '-'))
+        
+        formatted_http = HTTPStatusFormatter.format_status(raw_http_status, self.current_lang)
+        if formatted_http == "-":
+            formatted_http = t["st_valid"] if tls_ok else (t["st_invalid"] if tcp_ok else '-')
 
         if tls_ok: status, cat = t["st_sni_usable"], "success"
         elif tcp_ok: status, cat = t["st_tcp_ok"], "success"
         elif icmp_ok: status, cat = t["st_ping_only"], "ping_only"
         else: status, cat = t["st_down"], "down"
         
-        spd_disp = f"{speed_kb} KB/s" if speed_kb > 0 else "-"
+        # فرمت‌بندی هوشمند واحد سرعت (MB/s یا KB/s)
+        if speed_kb >= 1024.0:
+            spd_disp = f"{speed_kb / 1024.0:.2f} MB/s"
+        elif speed_kb > 0:
+            spd_disp = f"{speed_kb:.1f} KB/s"
+        else:
+            spd_disp = "-"
+
         if throttled: spd_disp += " ⚠️"
 
         self.result_queue.put({
             'target': target_label, 'ip': test_ip, 'port': port, 
             'icmp': icmp_display, 
             'tcp_ping': f"{tcp_ms} ms" if tcp_ok else "-",
-            'sni_http': sni_http_display, 
+            'sni_http': formatted_http, 
             'cdn': cdn_name, 'speed': spd_disp, 
             'score': score_val, 'status': status, 'cat': cat, 'sni_used': clean_sni
         })
@@ -1725,7 +1825,7 @@ class SNIScannerApp:
             self.update_metrics_ui()
             
             score = res['score']
-            score_display = f"{score} 🟩" if score > 70 else (f"{score} 🟨" if score > 30 else f"{score} 🟥")
+            score_display = f"{score} 🟩" if score > 75 else (f"{score} 🟨" if score > 40 else f"{score} 🟥")
             
             tag = res['cat']
             item_id = self.tree.insert("", tk.END, values=(
@@ -1791,7 +1891,6 @@ class SNIScannerApp:
             if not auto: messagebox.showwarning(t["msg_warning"], t["msg_invalid_select"])
             return
 
-        # ساختار کانفیگ 100% منطبق با پروژه SNI-Spoofing و ابزارهای دورزننده DPI
         config_data = {
             "LISTEN_HOST": "0.0.0.0",
             "LISTEN_PORT": 40443,
